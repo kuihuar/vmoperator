@@ -4,26 +4,64 @@
 
 echo "=== 修复 Docker Hub 超时问题 ==="
 
-# 1. 配置镜像仓库
-echo -e "\n1. 配置 k3s 镜像仓库..."
+# 1. 测试镜像源可用性
+echo -e "\n1. 测试镜像源可用性..."
+test_mirror() {
+    local url=$1
+    if curl -s -I --connect-timeout 3 "$url" > /dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# 测试多个镜像源
+AVAILABLE_MIRRORS=()
+if test_mirror "https://reg-mirror.qiniu.com"; then
+    AVAILABLE_MIRRORS+=("https://reg-mirror.qiniu.com")
+    echo "  ✓ 七牛云镜像可用"
+fi
+if test_mirror "https://hub-mirror.c.163.com"; then
+    AVAILABLE_MIRRORS+=("https://hub-mirror.c.163.com")
+    echo "  ✓ 网易镜像可用"
+fi
+if test_mirror "https://dockerhub.azk8s.cn"; then
+    AVAILABLE_MIRRORS+=("https://dockerhub.azk8s.cn")
+    echo "  ✓ Azure 镜像可用"
+fi
+if test_mirror "https://docker.mirrors.ustc.edu.cn"; then
+    AVAILABLE_MIRRORS+=("https://docker.mirrors.ustc.edu.cn")
+    echo "  ✓ 中科大镜像可用"
+fi
+
+# 如果没有可用的镜像源，使用默认列表
+if [ ${#AVAILABLE_MIRRORS[@]} -eq 0 ]; then
+    echo "  ⚠️  所有镜像源测试失败，使用默认配置"
+    AVAILABLE_MIRRORS=("https://reg-mirror.qiniu.com" "https://hub-mirror.c.163.com")
+fi
+
+# 2. 配置镜像仓库
+echo -e "\n2. 配置 k3s 镜像仓库..."
 sudo mkdir -p /etc/rancher/k3s
+
+# 构建镜像源列表
+MIRROR_LIST=""
+for mirror in "${AVAILABLE_MIRRORS[@]}"; do
+    MIRROR_LIST="${MIRROR_LIST}      - \"${mirror}\"\n"
+done
+
 sudo tee /etc/rancher/k3s/registries.yaml > /dev/null <<EOF
 mirrors:
   docker.io:
     endpoint:
-      - "https://docker.mirrors.ustc.edu.cn"
-      - "https://dockerhub.azk8s.cn"
-      - "https://reg-mirror.qiniu.com"
-  registry-1.docker.io:
+${MIRROR_LIST}  registry-1.docker.io:
     endpoint:
-      - "https://docker.mirrors.ustc.edu.cn"
-      - "https://dockerhub.azk8s.cn"
-      - "https://reg-mirror.qiniu.com"
-EOF
+${MIRROR_LIST}EOF
 echo "✓ 镜像仓库配置已创建: /etc/rancher/k3s/registries.yaml"
+echo "  使用的镜像源: ${AVAILABLE_MIRRORS[*]}"
 
-# 2. 重启 k3s
-echo -e "\n2. 重启 k3s（使配置生效）..."
+# 3. 重启 k3s
+echo -e "\n3. 重启 k3s（使配置生效）..."
 read -p "是否现在重启 k3s? (Y/n): " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Nn]$ ]]; then
@@ -41,8 +79,8 @@ else
     echo "跳过重启，请稍后手动重启: sudo systemctl restart k3s"
 fi
 
-# 3. 手动拉取镜像
-echo -e "\n3. 手动拉取 pause 镜像..."
+# 4. 手动拉取镜像
+echo -e "\n4. 手动拉取 pause 镜像..."
 export CRICTL_CONFIG=~/.config/crictl/crictl.yaml
 
 # 尝试拉取原始镜像
@@ -61,8 +99,8 @@ else
     fi
 fi
 
-# 4. 删除 Pod 重新创建
-echo -e "\n4. 删除 Pod 重新创建..."
+# 5. 删除 Pod 重新创建
+echo -e "\n5. 删除 Pod 重新创建..."
 if kubectl get pods -n kubevirt -l app=virt-operator > /dev/null 2>&1; then
     kubectl delete pod -n kubevirt -l app=virt-operator
     echo "✓ Pod 已删除，等待重新创建..."
@@ -71,8 +109,8 @@ else
     echo "⚠️  未找到 Pod，可能已被删除"
 fi
 
-# 5. 显示当前状态
-echo -e "\n5. 当前 Pod 状态:"
+# 6. 显示当前状态
+echo -e "\n6. 当前 Pod 状态:"
 kubectl get pods -n kubevirt 2>/dev/null || echo "命名空间或 Pod 不存在"
 
 echo -e "\n=== 完成 ==="
