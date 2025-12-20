@@ -4,16 +4,48 @@
 
 echo "=== 快速修复 Multus 在 k3s 中的配置 ==="
 
-# 1. 检查 k3s CNI 配置路径
-echo -e "\n1. 检查 k3s CNI 配置路径..."
-K3S_CNI_PATH="/var/lib/rancher/k3s/agent/etc/cni/net.d"
-if [ -d "$K3S_CNI_PATH" ]; then
-    echo "✓ k3s CNI 配置路径存在: $K3S_CNI_PATH"
-    echo "配置文件:"
-    sudo ls -la "$K3S_CNI_PATH" | head -5
-else
-    echo "❌ k3s CNI 配置路径不存在"
-    exit 1
+# 1. 查找 k3s CNI 配置路径
+echo -e "\n1. 查找 k3s CNI 配置路径..."
+K3S_CNI_PATH=""
+
+# 尝试多个可能的路径
+POSSIBLE_PATHS=(
+    "/var/lib/rancher/k3s/agent/etc/cni/net.d"
+    "/var/lib/rancher/k3s/server/manifests"
+    "/etc/cni/net.d"
+)
+
+for path in "${POSSIBLE_PATHS[@]}"; do
+    if [ -d "$path" ] && [ "$(sudo ls -A "$path" 2>/dev/null | wc -l)" -gt 0 ]; then
+        K3S_CNI_PATH="$path"
+        echo "✓ 找到 k3s CNI 配置路径: $K3S_CNI_PATH"
+        echo "配置文件:"
+        sudo ls -la "$K3S_CNI_PATH" | head -5
+        break
+    fi
+done
+
+if [ -z "$K3S_CNI_PATH" ]; then
+    echo "⚠️  未找到标准的 CNI 配置路径"
+    echo "尝试查找其他可能的路径..."
+    
+    # 查找包含 .conf 或 .conflist 的目录
+    FOUND_CONF=$(sudo find /var/lib/rancher/k3s -name "*.conf" -o -name "*.conflist" 2>/dev/null | head -1)
+    if [ -n "$FOUND_CONF" ]; then
+        K3S_CNI_PATH=$(dirname "$FOUND_CONF")
+        echo "✓ 通过配置文件找到路径: $K3S_CNI_PATH"
+        echo "配置文件:"
+        sudo ls -la "$K3S_CNI_PATH" | head -5
+    else
+        echo "❌ 无法找到 k3s CNI 配置路径"
+        echo ""
+        echo "请运行以下命令查找路径:"
+        echo "  ./scripts/find-k3s-cni-path.sh"
+        echo ""
+        echo "或者手动检查:"
+        echo "  sudo find /var/lib/rancher/k3s -name '*.conf' -o -name '*.conflist'"
+        exit 1
+    fi
 fi
 
 # 2. 备份 Multus DaemonSet
