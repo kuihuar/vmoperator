@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -193,6 +195,32 @@ func CheckDataVolumeStatus(ctx context.Context, c client.Client, namespace, name
 
 	if phase == "Failed" || phase == "Error" {
 		return false, fmt.Errorf("DataVolume %s/%s is in %s state", namespace, name, phase)
+	}
+
+	// 检查是否是 WaitForFirstConsumer 模式
+	if phase == "WaitForFirstConsumer" {
+		// DataVolume 处于 WaitForFirstConsumer 状态，检查对应的 PVC
+		// 如果 PVC 的 StorageClass 是 WaitForFirstConsumer 模式，可以继续创建 VM
+		pvc := &corev1.PersistentVolumeClaim{}
+		pvcKey := client.ObjectKey{Namespace: namespace, Name: name}
+		if err := c.Get(ctx, pvcKey, pvc); err == nil {
+			if pvc.Spec.StorageClassName != nil {
+				storageClassName := *pvc.Spec.StorageClassName
+				sc := &storagev1.StorageClass{}
+				scKey := client.ObjectKey{Name: storageClassName}
+				if err := c.Get(ctx, scKey, sc); err == nil {
+					if sc.VolumeBindingMode != nil && *sc.VolumeBindingMode == storagev1.VolumeBindingWaitForFirstConsumer {
+						// WaitForFirstConsumer 模式：DataVolume/PVC 会在第一个 Pod 创建时绑定
+						logger.V(1).Info("DataVolume is in WaitForFirstConsumer mode, will bind when VM Pod is created", "name", name)
+						// 返回 true，允许继续创建 VM
+						return true, nil
+					}
+				}
+			}
+		}
+		// 如果不是 WaitForFirstConsumer 模式，继续等待
+		logger.V(1).Info("DataVolume is in WaitForFirstConsumer phase but not WaitForFirstConsumer mode, waiting", "name", name)
+		return false, nil
 	}
 
 	// 其他状态（Pending, ImportScheduled, ImportInProgress 等），还在进行中
