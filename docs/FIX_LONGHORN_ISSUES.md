@@ -9,13 +9,61 @@
 longhorn-manager-xxx   0/1     CrashLoopBackOff   6
 ```
 
+**常见错误**:
+```
+Error starting manager: Failed environment check, please make sure you have iscsiadm/open-iscsi installed on the host
+```
+
 **可能原因**:
-1. 节点资源不足（CPU/内存）
-2. 存储路径配置问题
-3. 节点标签缺失
-4. 权限问题
+1. **缺少 open-iscsi**（最常见）⭐
+2. 节点资源不足（CPU/内存）
+3. 存储路径配置问题
+4. 节点标签缺失
+5. 权限问题
 
 **解决方案**:
+
+#### 0. 安装 open-iscsi（最常见的问题）⭐
+
+**如果错误信息包含 `iscsiadm` 或 `open-iscsi`**，这是最常见的问题：
+
+**Ubuntu/Debian**:
+```bash
+# SSH 到节点
+ssh <node-ip>
+
+# 安装 open-iscsi
+sudo apt-get update
+sudo apt-get install -y open-iscsi
+
+# 启动服务
+sudo systemctl enable iscsid
+sudo systemctl start iscsid
+```
+
+**CentOS/RHEL**:
+```bash
+# SSH 到节点
+ssh <node-ip>
+
+# 安装 iscsi-initiator-utils
+sudo yum install -y iscsi-initiator-utils
+
+# 启动服务
+sudo systemctl enable iscsid
+sudo systemctl start iscsid
+```
+
+**使用安装脚本**:
+```bash
+# 在节点上运行
+./scripts/install-open-iscsi.sh
+```
+
+**在所有节点上安装后，重启 longhorn-manager**:
+```bash
+kubectl delete pod -n longhorn-system -l app=longhorn-manager
+```
 
 #### 1. 检查日志
 
