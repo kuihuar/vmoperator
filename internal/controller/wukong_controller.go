@@ -249,6 +249,11 @@ func (r *WukongReconciler) reconcileDisks(ctx context.Context, vmp *vmv1alpha1.W
 	// 使用存储管理模块处理所有磁盘
 	volumesStatus, err := storage.ReconcileDisks(ctx, r.Client, vmp)
 	if err != nil {
+		// 如果是 context canceled，不记录 ERROR，直接返回让上层处理
+		if ctx.Err() != nil {
+			logger.V(1).Info("Context canceled during disk reconciliation, will retry", "error", err)
+			return nil, err
+		}
 		logger.Error(err, "failed to reconcile disks")
 		return nil, err
 	}
