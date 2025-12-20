@@ -15,10 +15,18 @@ fi
 
 # 2. 测试 registry-1.docker.io
 echo -e "\n2. 测试 Docker Registry..."
-if curl -s -I --connect-timeout 5 https://registry-1.docker.io/v2/ > /dev/null 2>&1; then
-    echo "✓ Docker Registry 可访问"
+# Docker Registry 的 /v2/ 端点可能需要认证，测试 /v2/ 会返回 401，这是正常的
+# 我们测试是否能连接到 registry
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 https://registry-1.docker.io/v2/ 2>/dev/null)
+if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "301" ] || [ "$HTTP_CODE" = "302" ]; then
+    echo "✓ Docker Registry 可访问 (HTTP $HTTP_CODE)"
+    echo "  注意: 401 是正常的，表示需要认证，但连接正常"
+elif [ -n "$HTTP_CODE" ]; then
+    echo "⚠️  Docker Registry 返回 HTTP $HTTP_CODE"
+    echo "  但继续配置，k3s 会尝试拉取镜像"
 else
-    echo "⚠️  Docker Registry 可能无法访问，但继续配置"
+    echo "⚠️  Docker Registry 连接测试失败（可能是网络问题）"
+    echo "  但继续配置，如果本地有镜像应该可以使用"
 fi
 
 # 3. 配置 k3s 使用 Docker Hub（移除镜像源配置）
@@ -54,10 +62,19 @@ fi
 
 # 5. 测试从 Docker Hub 拉取镜像
 echo -e "\n5. 测试从 Docker Hub 拉取 pause 镜像..."
-if crictl pull rancher/mirrored-pause:3.6 2>&1 | head -5; then
+echo "尝试拉取 rancher/mirrored-pause:3.6..."
+PULL_OUTPUT=$(crictl pull rancher/mirrored-pause:3.6 2>&1)
+PULL_EXIT=$?
+
+if [ $PULL_EXIT -eq 0 ]; then
     echo "✓ 成功从 Docker Hub 拉取镜像"
+elif echo "$PULL_OUTPUT" | grep -q "already exists\|Image.*already present"; then
+    echo "✓ 镜像已存在（本地或已拉取）"
 else
-    echo "⚠️  拉取失败，但本地已有镜像，应该可以使用"
+    echo "⚠️  拉取失败，输出:"
+    echo "$PULL_OUTPUT" | head -3
+    echo ""
+    echo "但本地已有镜像，k3s 应该可以使用本地镜像"
 fi
 
 # 6. 重启 k3s
