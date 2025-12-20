@@ -37,8 +37,46 @@ fi
 
 # 3. 安装 KubeVirt Operator
 echo -e "\n3. 安装 KubeVirt Operator..."
-echo "下载: https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-operator.yaml"
-kubectl create -f https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-operator.yaml
+
+# 定义下载函数，支持重试和镜像源
+download_with_retry() {
+    local url=$1
+    local max_retries=3
+    local retry_count=0
+    
+    while [ $retry_count -lt $max_retries ]; do
+        echo "尝试下载 (第 $((retry_count + 1)) 次): $url"
+        if kubectl create -f "$url" 2>/dev/null; then
+            return 0
+        fi
+        retry_count=$((retry_count + 1))
+        if [ $retry_count -lt $max_retries ]; then
+            echo "下载失败，等待 5 秒后重试..."
+            sleep 5
+        fi
+    done
+    
+    return 1
+}
+
+# 尝试从 GitHub 下载
+OPERATOR_URL="https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-operator.yaml"
+if ! download_with_retry "$OPERATOR_URL"; then
+    echo "⚠️  从 GitHub 下载失败，尝试使用镜像源..."
+    
+    # 尝试使用 ghproxy 镜像
+    GH_PROXY_URL="https://ghproxy.com/${OPERATOR_URL}"
+    echo "尝试镜像源: $GH_PROXY_URL"
+    if ! download_with_retry "$GH_PROXY_URL"; then
+        echo "✗ 所有下载方式都失败"
+        echo ""
+        echo "请手动下载并安装:"
+        echo "  1. 访问: $OPERATOR_URL"
+        echo "  2. 保存为: kubevirt-operator.yaml"
+        echo "  3. 运行: kubectl create -f kubevirt-operator.yaml"
+        exit 1
+    fi
+fi
 
 echo -e "\n等待 KubeVirt Operator 就绪..."
 if kubectl wait -n kubevirt deployment virt-operator --for condition=Available --timeout=300s 2>/dev/null; then
@@ -53,8 +91,25 @@ fi
 
 # 4. 安装 KubeVirt CR
 echo -e "\n4. 安装 KubeVirt CR..."
-echo "下载: https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-cr.yaml"
-kubectl create -f https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-cr.yaml
+
+# 尝试从 GitHub 下载
+CR_URL="https://github.com/kubevirt/kubevirt/releases/download/${KUBEVIRT_VERSION}/kubevirt-cr.yaml"
+if ! download_with_retry "$CR_URL"; then
+    echo "⚠️  从 GitHub 下载失败，尝试使用镜像源..."
+    
+    # 尝试使用 ghproxy 镜像
+    GH_PROXY_URL="https://ghproxy.com/${CR_URL}"
+    echo "尝试镜像源: $GH_PROXY_URL"
+    if ! download_with_retry "$GH_PROXY_URL"; then
+        echo "✗ 所有下载方式都失败"
+        echo ""
+        echo "请手动下载并安装:"
+        echo "  1. 访问: $CR_URL"
+        echo "  2. 保存为: kubevirt-cr.yaml"
+        echo "  3. 运行: kubectl create -f kubevirt-cr.yaml"
+        exit 1
+    fi
+fi
 
 echo -e "\n等待 KubeVirt 就绪（这可能需要几分钟）..."
 if kubectl wait -n kubevirt kubevirt kubevirt --for condition=Available --timeout=600s 2>/dev/null; then
