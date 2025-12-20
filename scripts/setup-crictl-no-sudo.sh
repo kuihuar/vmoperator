@@ -6,6 +6,15 @@ echo "=== 配置 crictl 无需 sudo ==="
 
 # 1. 创建配置文件
 echo -e "\n1. 创建 crictl 配置文件..."
+
+# crictl 配置文件查找顺序：
+# 1. $CRICTL_CONFIG (环境变量)
+# 2. $XDG_CONFIG_HOME/crictl/crictl.yaml
+# 3. $HOME/.config/crictl/crictl.yaml
+# 4. /etc/crictl.yaml
+# 5. /var/lib/rancher/k3s/agent/etc/crictl.yaml (k3s 特定)
+
+# 方法 1: 用户配置文件
 mkdir -p ~/.config/crictl
 cat > ~/.config/crictl/crictl.yaml <<EOF
 runtime-endpoint: unix:///run/k3s/containerd/containerd.sock
@@ -13,10 +22,33 @@ image-endpoint: unix:///run/k3s/containerd/containerd.sock
 timeout: 10
 debug: false
 EOF
-echo "✓ 配置文件已创建: ~/.config/crictl/crictl.yaml"
+echo "✓ 用户配置文件已创建: ~/.config/crictl/crictl.yaml"
 
-# 2. 检查 socket 文件
-echo -e "\n2. 检查 socket 文件..."
+# 方法 2: 系统级配置文件（如果用户配置不工作）
+echo -e "\n2. 创建系统级配置文件（可选）..."
+read -p "是否创建系统级配置文件 /etc/crictl.yaml? (Y/n): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    sudo tee /etc/crictl.yaml > /dev/null <<EOF
+runtime-endpoint: unix:///run/k3s/containerd/containerd.sock
+image-endpoint: unix:///run/k3s/containerd/containerd.sock
+timeout: 10
+debug: false
+EOF
+    sudo chmod 644 /etc/crictl.yaml
+    echo "✓ 系统级配置文件已创建: /etc/crictl.yaml"
+fi
+
+# 方法 3: 设置环境变量（备用）
+echo -e "\n3. 设置环境变量（备用方案）..."
+if ! grep -q "CRICTL_CONFIG" ~/.bashrc 2>/dev/null; then
+    echo 'export CRICTL_CONFIG=~/.config/crictl/crictl.yaml' >> ~/.bashrc
+    echo "✓ 环境变量已添加到 ~/.bashrc"
+    echo "  运行 'source ~/.bashrc' 或重新登录使环境变量生效"
+fi
+
+# 4. 检查 socket 文件
+echo -e "\n4. 检查 socket 文件..."
 if [ -S /run/k3s/containerd/containerd.sock ]; then
     echo "✓ Socket 文件存在: /run/k3s/containerd/containerd.sock"
     CURRENT_PERMS=$(stat -c "%a" /run/k3s/containerd/containerd.sock 2>/dev/null || stat -f "%OLp" /run/k3s/containerd/containerd.sock)
@@ -34,8 +66,8 @@ else
     fi
 fi
 
-# 3. 配置 socket 权限
-echo -e "\n3. 配置 socket 权限..."
+# 5. 配置 socket 权限
+echo -e "\n5. 配置 socket 权限..."
 
 # 检查是否有 k3s 组
 if getent group k3s > /dev/null 2>&1; then
@@ -59,16 +91,16 @@ EOF
     echo "  ⚠️  需要重启 k3s 使配置生效: sudo systemctl restart k3s"
 fi
 
-# 4. 临时修改权限（立即生效）
-echo -e "\n4. 临时修改 socket 权限（立即生效）..."
+# 6. 临时修改权限（立即生效）
+echo -e "\n6. 临时修改 socket 权限（立即生效）..."
 if sudo chmod 666 /run/k3s/containerd/containerd.sock 2>/dev/null; then
     echo "  ✓ Socket 权限已修改（临时）"
 else
     echo "  ⚠️  无法修改权限，可能需要重启 k3s"
 fi
 
-# 5. 测试
-echo -e "\n5. 测试 crictl..."
+# 7. 测试
+echo -e "\n7. 测试 crictl..."
 if crictl version > /dev/null 2>&1; then
     echo "  ✓ crictl 可以正常工作（无需 sudo）"
     echo ""
