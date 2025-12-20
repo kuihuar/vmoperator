@@ -81,7 +81,28 @@ func ReconcilePVC(ctx context.Context, c client.Client, disk vmv1alpha1.DiskConf
 
 	// PVC 已存在，检查绑定状态
 	logger.V(1).Info("Found existing PersistentVolumeClaim", "name", pvcName, "phase", existingPVC.Status.Phase)
+	
+	// 检查 StorageClass 的 volumeBindingMode
+	// 如果是 WaitForFirstConsumer，即使 PVC 未绑定也可以继续（PVC 会在 Pod 创建时绑定）
 	bound := existingPVC.Status.Phase == corev1.ClaimBound
+	if !bound && existingPVC.Spec.StorageClassName != nil {
+		storageClassName := *existingPVC.Spec.StorageClassName
+		// 检查 StorageClass 的 volumeBindingMode
+		sc := &corev1.StorageClass{}
+		scKey := client.ObjectKey{Name: storageClassName}
+		if err := c.Get(ctx, scKey, sc); err == nil {
+			if sc.VolumeBindingMode != nil && *sc.VolumeBindingMode == corev1.VolumeBindingWaitForFirstConsumer {
+				// WaitForFirstConsumer 模式：PVC 会在第一个 Pod 创建时绑定
+				// 如果 PVC 处于 Pending 状态且没有错误，可以继续
+				if existingPVC.Status.Phase == corev1.ClaimPending {
+					logger.V(1).Info("PVC is in WaitForFirstConsumer mode, will bind when VM Pod is created", "name", pvcName)
+					// 返回 bound=true，允许继续创建 VM
+					return pvcName, true, nil
+				}
+			}
+		}
+	}
+	
 	return pvcName, bound, nil
 }
 
