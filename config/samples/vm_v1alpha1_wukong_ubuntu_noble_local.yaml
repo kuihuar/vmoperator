@@ -16,12 +16,12 @@ spec:
   disks:
     - name: system
       size: 5Gi
-      # storageClassName: docker-desktop
-      storageClassName: hostpath   # Docker Desktop 默认 StorageClass
+      storageClassName: local-path   # k3s 默认 StorageClass
       boot: true
-      # 使用本地 registry 的镜像
-      # image: "docker://host.docker.internal:5000/ubuntu-noble:latest"
-      image: "http://host.docker.internal:8080/images/noble-server-cloudimg-amd64.img"
+      # 使用 HTTP 源下载镜像（k3s 环境）
+      # 注意：在 k3s 中，需要使用实际的虚拟机 IP 地址，而不是 host.docker.internal
+      # 确保 HTTP 服务器在宿主机上运行，并且可以从 Pod 网络访问
+      image: "http://192.168.1.141:8080/images/noble-server-cloudimg-amd64.img"
 
       
   
