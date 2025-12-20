@@ -27,13 +27,13 @@ sudo tee /etc/rancher/k3s/registries.yaml > /dev/null <<EOF
 mirrors:
   docker.io:
     endpoint:
-      - "https://docker.mirrors.ustc.edu.cn"
-      - "https://dockerhub.azk8s.cn"
+      - "https://e0hhb5lk.mirror.aliyuncs.com"
+      - "https://mirror.azure.cn"
       - "https://reg-mirror.qiniu.com"
   registry-1.docker.io:
     endpoint:
-      - "https://docker.mirrors.ustc.edu.cn"
-      - "https://dockerhub.azk8s.cn"
+      - "https://e0hhb5lk.mirror.aliyuncs.com"
+      - "https://mirror.azure.cn"
       - "https://reg-mirror.qiniu.com"
 EOF
 ```
@@ -140,12 +140,12 @@ sudo tee /etc/rancher/k3s/registries.yaml > /dev/null <<EOF
 mirrors:
   docker.io:
     endpoint:
-      - "https://docker.mirrors.ustc.edu.cn"
-      - "https://dockerhub.azk8s.cn"
+      - "https://mirror.azure.cn"
+      - "https://reg-mirror.qiniu.com"
   registry-1.docker.io:
     endpoint:
-      - "https://docker.mirrors.ustc.edu.cn"
-      - "https://dockerhub.azk8s.cn"
+      - "https://mirror.azure.cn"
+      - "https://reg-mirror.qiniu.com"
 EOF
 echo "✓ 镜像仓库配置已创建"
 
@@ -176,7 +176,7 @@ timeout 30 kubectl get pods -n kubevirt -w || true
 
 echo -e "\n=== 完成 ==="
 echo "如果 Pod 仍然无法启动，请检查："
-echo "  1. 网络连接: curl -I https://docker.mirrors.ustc.edu.cn"
+echo "  1. 网络连接: curl -I https://mirror.azure.cn"
 echo "  2. k3s 日志: sudo journalctl -u k3s -n 50"
 echo "  3. Pod 事件: kubectl get events -n kubevirt --sort-by='.lastTimestamp' | tail -10"
 ```
@@ -199,16 +199,22 @@ crictl images | grep pause
 
 ## 国内镜像源列表
 
-如果中科大镜像不可用，可以尝试：
+推荐的镜像源（按优先级）：
 
 ```yaml
 mirrors:
   docker.io:
     endpoint:
-      - "https://dockerhub.azk8s.cn"      # Azure 中国镜像
-      - "https://reg-mirror.qiniu.com"    # 七牛云镜像
-      - "https://docker.mirrors.ustc.edu.cn"  # 中科大镜像
-      - "https://hub-mirror.c.163.com"    # 网易镜像
+      - "https://e0hhb5lk.mirror.aliyuncs.com"  # 阿里云镜像（推荐）
+      - "https://mirror.azure.cn"               # Azure 中国镜像
+      - "https://reg-mirror.qiniu.com"          # 七牛云镜像
+      - "https://hub-mirror.c.163.com"          # 网易镜像
+  registry-1.docker.io:
+    endpoint:
+      - "https://e0hhb5lk.mirror.aliyuncs.com"
+      - "https://mirror.azure.cn"
+      - "https://reg-mirror.qiniu.com"
+      - "https://hub-mirror.c.163.com"
 ```
 
 ## 总结

@@ -17,6 +17,14 @@ test_mirror() {
 
 # 测试多个镜像源
 AVAILABLE_MIRRORS=()
+if test_mirror "https://e0hhb5lk.mirror.aliyuncs.com"; then
+    AVAILABLE_MIRRORS+=("https://e0hhb5lk.mirror.aliyuncs.com")
+    echo "  ✓ 阿里云镜像可用"
+fi
+if test_mirror "https://mirror.azure.cn"; then
+    AVAILABLE_MIRRORS+=("https://mirror.azure.cn")
+    echo "  ✓ Azure 中国镜像可用"
+fi
 if test_mirror "https://reg-mirror.qiniu.com"; then
     AVAILABLE_MIRRORS+=("https://reg-mirror.qiniu.com")
     echo "  ✓ 七牛云镜像可用"
@@ -25,19 +33,11 @@ if test_mirror "https://hub-mirror.c.163.com"; then
     AVAILABLE_MIRRORS+=("https://hub-mirror.c.163.com")
     echo "  ✓ 网易镜像可用"
 fi
-if test_mirror "https://dockerhub.azk8s.cn"; then
-    AVAILABLE_MIRRORS+=("https://dockerhub.azk8s.cn")
-    echo "  ✓ Azure 镜像可用"
-fi
-if test_mirror "https://docker.mirrors.ustc.edu.cn"; then
-    AVAILABLE_MIRRORS+=("https://docker.mirrors.ustc.edu.cn")
-    echo "  ✓ 中科大镜像可用"
-fi
 
 # 如果没有可用的镜像源，使用默认列表
 if [ ${#AVAILABLE_MIRRORS[@]} -eq 0 ]; then
     echo "  ⚠️  所有镜像源测试失败，使用默认配置"
-    AVAILABLE_MIRRORS=("https://reg-mirror.qiniu.com" "https://hub-mirror.c.163.com")
+    AVAILABLE_MIRRORS=("https://e0hhb5lk.mirror.aliyuncs.com" "https://mirror.azure.cn")
 fi
 
 # 2. 配置镜像仓库

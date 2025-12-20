@@ -25,6 +25,14 @@ test_mirror() {
 }
 
 AVAILABLE_MIRRORS=()
+if test_mirror "https://e0hhb5lk.mirror.aliyuncs.com"; then
+    AVAILABLE_MIRRORS+=("https://e0hhb5lk.mirror.aliyuncs.com")
+    echo "  ✓ 阿里云镜像可用"
+fi
+if test_mirror "https://mirror.azure.cn"; then
+    AVAILABLE_MIRRORS+=("https://mirror.azure.cn")
+    echo "  ✓ Azure 中国镜像可用"
+fi
 if test_mirror "https://reg-mirror.qiniu.com"; then
     AVAILABLE_MIRRORS+=("https://reg-mirror.qiniu.com")
     echo "  ✓ 七牛云可用"

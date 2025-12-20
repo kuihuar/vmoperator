@@ -27,10 +27,10 @@ echo ""
 AVAILABLE=()
 
 # 测试各种镜像源
+test_mirror "https://e0hhb5lk.mirror.aliyuncs.com" "阿里云" && AVAILABLE+=("https://e0hhb5lk.mirror.aliyuncs.com")
+test_mirror "https://mirror.azure.cn" "Azure 中国" && AVAILABLE+=("https://mirror.azure.cn")
 test_mirror "https://reg-mirror.qiniu.com" "七牛云" && AVAILABLE+=("https://reg-mirror.qiniu.com")
 test_mirror "https://hub-mirror.c.163.com" "网易" && AVAILABLE+=("https://hub-mirror.c.163.com")
-test_mirror "https://dockerhub.azk8s.cn" "Azure 中国" && AVAILABLE+=("https://dockerhub.azk8s.cn")
-test_mirror "https://docker.mirrors.ustc.edu.cn" "中科大" && AVAILABLE+=("https://docker.mirrors.ustc.edu.cn")
 test_mirror "https://mirror.ccs.tencentyun.com" "腾讯云" && AVAILABLE+=("https://mirror.ccs.tencentyun.com")
 
 echo ""
