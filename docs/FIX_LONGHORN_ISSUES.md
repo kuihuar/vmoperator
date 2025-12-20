@@ -151,11 +151,56 @@ kubectl apply -f https://raw.githubusercontent.com/longhorn/longhorn/v1.6.0/depl
 longhorn-driver-deployer-xxx   0/1     Init:0/1
 ```
 
-**原因**: 通常是因为 `longhorn-manager` 未就绪，Init Container 在等待 Manager。
+**查看 Init Container 日志**:
+```bash
+kubectl logs -n longhorn-system <pod-name> -c wait-longhorn-manager
+```
+
+**原因**: Init Container `wait-longhorn-manager` 在等待 `longhorn-manager` 就绪。
 
 **解决方案**:
-1. 先解决 `longhorn-manager` 的问题（见问题 1）
-2. 等待 Manager 就绪后，Driver Deployer 会自动继续
+
+#### 1. 先修复 longhorn-manager（必需）
+
+`driver-deployer` 依赖于 `longhorn-manager`，必须先修复 Manager：
+
+```bash
+# 检查 manager 状态
+kubectl get pods -n longhorn-system -l app=longhorn-manager
+
+# 如果 manager 是 CrashLoopBackOff，先修复（通常是缺少 open-iscsi）
+# 见问题 1 的解决方案
+```
+
+#### 2. 等待 Manager 就绪
+
+```bash
+# 等待 manager 就绪
+kubectl wait --for=condition=ready pod -l app=longhorn-manager -n longhorn-system --timeout=300s
+```
+
+#### 3. 重启 driver-deployer（可选）
+
+如果 Manager 已就绪但 driver-deployer 仍然卡住：
+
+```bash
+# 删除 driver-deployer Pod（会自动重建）
+kubectl delete pod -n longhorn-system -l app=longhorn-driver-deployer
+
+# 等待重建
+kubectl get pods -n longhorn-system -l app=longhorn-driver-deployer -w
+```
+
+#### 4. 检查 Init Container 日志
+
+```bash
+DEPLOYER_POD=$(kubectl get pods -n longhorn-system -l app=longhorn-driver-deployer -o jsonpath='{.items[0].metadata.name}')
+
+# 查看 Init Container 日志
+kubectl logs -n longhorn-system $DEPLOYER_POD -c wait-longhorn-manager
+```
+
+**关键点**: `driver-deployer` 会一直等待直到 `longhorn-manager` 就绪，这是正常行为。
 
 ### 问题 3: 节点磁盘空间不足
 
