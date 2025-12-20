@@ -1,0 +1,56 @@
+apiVersion: vm.novasphere.dev/v1alpha1
+kind: Wukong
+metadata:
+  name: ubuntu-production
+  labels:
+    app.kubernetes.io/name: novasphere
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  cpu: 4
+  memory: 8Gi
+  
+  # 生产环境：系统盘和数据盘分离设计
+  disks:
+    # 系统盘：使用高性能存储（SSD）
+    - name: system
+      size: 30Gi
+      storageClassName: longhorn  # 或 nfs-client, rook-ceph-block
+      boot: true
+      # 使用 HTTP 源下载镜像
+      image: "http://192.168.1.141:8080/images/noble-server-cloudimg-amd64.img"
+    
+    # 数据盘：使用标准存储
+    - name: data
+      size: 200Gi
+      storageClassName: longhorn  # 或 nfs-client, rook-ceph-block
+      boot: false
+    
+    # 日志盘：使用归档存储（可选）
+    # - name: logs
+    #   size: 100Gi
+    #   storageClassName: longhorn
+    #   boot: false
+  
+  # Cloud-Init 用户配置
+  cloudInitUser:
+    name: ubuntu
+    passwordHash: "$1$7.t8q8zZ$59I1IiMXy5w3gIl5Yrn/4/"  # 替换为实际生成的哈希
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: "/bin/bash"
+    groups:
+      - sudo
+      - adm
+      - dialout
+    lockPasswd: false
+  
+  # 高可用配置
+  highAvailability:
+    restartPolicy: Always
+    antiAffinity: true
+    nodeSelector:
+      node-role.kubernetes.io/worker: ""
+  
+  # 启动策略：自动启动
+  startStrategy:
+    autoStart: true
+

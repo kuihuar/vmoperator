@@ -139,6 +139,13 @@ func (r *WukongReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{RequeueAfter: time.Second * 30}, err
 	}
 
+	// 8.1. 处理磁盘扩展（如果磁盘大小发生变化）
+	if err := storage.ReconcileDiskExpansion(ctx, r.Client, &vmp, volumesStatus); err != nil {
+		logger.V(1).Info("Disk expansion in progress or failed", "error", err)
+		// 磁盘扩展失败不影响整体流程，记录日志即可
+		// 扩展可能需要一些时间，会在下次 reconcile 时重试
+	}
+
 	// 检查所有卷是否已绑定，如果未绑定则 requeue
 	allVolumesBound := true
 	for _, vol := range volumesStatus {

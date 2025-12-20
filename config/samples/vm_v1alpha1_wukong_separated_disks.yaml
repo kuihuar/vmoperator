@@ -1,0 +1,49 @@
+apiVersion: vm.novasphere.dev/v1alpha1
+kind: Wukong
+metadata:
+  name: ubuntu-separated-disks
+  labels:
+    app.kubernetes.io/name: novasphere
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  cpu: 2
+  memory: 4Gi
+  
+  # 系统盘和数据盘分离设计
+  disks:
+    # 系统盘：用于操作系统和系统软件
+    - name: system
+      size: 5Gi
+      storageClassName: local-path   # k3s 默认 StorageClass
+      boot: true                      # 标记为启动盘
+      # 使用 HTTP 源下载镜像（k3s 环境）
+      image: "http://192.168.1.141:8080/images/noble-server-cloudimg-amd64.img"
+    
+    # 数据盘 1：用于应用数据
+    - name: data
+      size: 2Gi
+      storageClassName: local-path
+      boot: false                     # 非启动盘
+    
+    # 数据盘 2：用于日志数据
+    # - name: logs
+    #   size: 50Gi
+    #   storageClassName: local-path
+    #   boot: false
+  
+  # Cloud-Init 用户配置
+  cloudInitUser:
+    name: ubuntu
+    passwordHash: "$1$7.t8q8zZ$59I1IiMXy5w3gIl5Yrn/4/"  # 替换为实际生成的哈希
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: "/bin/bash"
+    groups:
+      - sudo
+      - adm
+      - dialout
+    lockPasswd: false
+  
+  # 启动策略：自动启动
+  startStrategy:
+    autoStart: true
+
