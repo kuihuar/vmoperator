@@ -1,0 +1,53 @@
+apiVersion: vm.novasphere.dev/v1alpha1
+kind: Wukong
+metadata:
+  name: wukong-with-user
+  labels:
+    app.kubernetes.io/name: novasphere
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  cpu: 2
+  memory: 4Gi
+  
+  # Cloud-Init 用户配置（推荐使用 passwordHash）
+  cloudInitUser:
+    name: ubuntu
+    # 方法 1: 使用明文密码（简单但不安全，仅用于开发环境）
+    # password: "ubuntu123"
+    
+    # 方法 2: 使用密码哈希（推荐，更安全）
+    # 生成密码哈希: echo -n "your-password" | openssl passwd -1 -stdin
+    # 或: python3 -c "import crypt; print(crypt.crypt('your-password', crypt.mksalt(crypt.METHOD_SHA512)))"
+    passwordHash: "$6$rounds=4096$salt$hashed_password_here"
+    
+    # Sudo 权限（可选，默认: ALL=(ALL) NOPASSWD:ALL）
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    
+    # Shell（可选，默认: /bin/bash）
+    shell: "/bin/bash"
+    
+    # 用户组（可选，默认包含: sudo, adm, dialout 等）
+    groups:
+      - sudo
+      - adm
+      - docker
+    
+    # 是否锁定密码（可选，默认: false）
+    lockPasswd: false
+  
+  # 磁盘配置
+  disks:
+    - name: system
+      size: 20Gi
+      storageClassName: local-path
+      boot: true
+      # 可选：从镜像创建
+      # image: "http://192.168.1.141:8080/images/noble-server-cloudimg-amd64.img"
+  
+  # SSH Key（可选，与 cloudInitUser 可以同时使用）
+  # sshKeySecret: "my-ssh-keys"
+  
+  # 启动策略
+  startStrategy:
+    autoStart: true
+

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -26,7 +27,7 @@ func ReconcileVirtualMachine(ctx context.Context, c client.Client, vmp *vmv1alph
 	logger.Info("Reconciling VirtualMachine", "name", vmName, "namespace", vmp.Namespace)
 
 	// 构建 VirtualMachine 对象
-	vm := buildVirtualMachine(vmp, networks, volumes)
+	vm := buildVirtualMachine(ctx, c, vmp, networks, volumes)
 	if vm == nil {
 		return "", fmt.Errorf("failed to build VirtualMachine object")
 	}
@@ -62,7 +63,7 @@ func ReconcileVirtualMachine(ctx context.Context, c client.Client, vmp *vmv1alph
 }
 
 // buildVirtualMachine 构建 VirtualMachine 对象
-func buildVirtualMachine(vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkStatus, volumes []vmv1alpha1.VolumeStatus) *kubevirtv1.VirtualMachine {
+func buildVirtualMachine(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkStatus, volumes []vmv1alpha1.VolumeStatus) *kubevirtv1.VirtualMachine {
 	vmName := fmt.Sprintf("%s-vm", vmp.Name)
 
 	vm := &kubevirtv1.VirtualMachine{
@@ -70,7 +71,7 @@ func buildVirtualMachine(vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkSt
 			Name:      vmName,
 			Namespace: vmp.Namespace,
 		},
-		Spec: buildVMSpec(vmp, networks, volumes),
+		Spec: buildVMSpec(ctx, c, vmp, networks, volumes),
 	}
 
 	// 设置 OwnerReference，使 VM 成为 Wukong 的子资源
@@ -97,7 +98,7 @@ func buildVirtualMachine(vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkSt
 }
 
 // buildVMSpec 构建 VirtualMachine spec
-func buildVMSpec(vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkStatus, volumes []vmv1alpha1.VolumeStatus) kubevirtv1.VirtualMachineSpec {
+func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkStatus, volumes []vmv1alpha1.VolumeStatus) kubevirtv1.VirtualMachineSpec {
 	// 确定是否运行
 	autoStart := true
 	if vmp.Spec.StartStrategy != nil {
@@ -135,8 +136,8 @@ func buildVMSpec(vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkStatus, vo
 	}
 
 	// 添加 Cloud-Init 配置（如果有）
-	if vmp.Spec.OSImage != "" || vmp.Spec.SSHKeySecret != "" {
-		cloudInitData := buildCloudInitData(vmp)
+	if vmp.Spec.OSImage != "" || vmp.Spec.SSHKeySecret != "" || vmp.Spec.CloudInitUser != nil {
+		cloudInitData := buildCloudInitData(ctx, c, vmp)
 		if cloudInitData != "" {
 			// 添加 cloudInitNoCloud volume
 			cloudInitVolume := kubevirtv1.Volume{
@@ -318,23 +319,116 @@ func buildVolumes(volumes []vmv1alpha1.VolumeStatus) []kubevirtv1.Volume {
 }
 
 // buildCloudInitData 构建 Cloud-Init 用户数据
-func buildCloudInitData(vmp *vmv1alpha1.Wukong) string {
-	// 简单的 Cloud-Init 配置
-	// 实际使用中可能需要更复杂的配置
+func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong) string {
+	logger := log.FromContext(ctx)
 	cloudInit := "#cloud-config\n"
 
+	// 配置用户（如果有）
+	if vmp.Spec.CloudInitUser != nil {
+		user := vmp.Spec.CloudInitUser
+		cloudInit += "users:\n"
+		cloudInit += fmt.Sprintf("  - name: %s\n", user.Name)
+
+		// 配置密码
+		if user.PasswordHash != "" {
+			// 使用提供的密码哈希（推荐）
+			cloudInit += fmt.Sprintf("    passwd: %s\n", user.PasswordHash)
+		} else if user.Password != "" {
+			// 使用明文密码（不推荐）
+			// 注意：cloud-init 的 passwd 字段需要密码哈希格式（如 $6$...）
+			// 明文密码可能不会工作，强烈建议使用 passwordHash
+			// 生成密码哈希: echo -n "password" | openssl passwd -1 -stdin
+			// 或: python3 -c "import crypt; print(crypt.crypt('password', crypt.mksalt(crypt.METHOD_SHA512)))"
+			logger.Info("Using plain text password, cloud-init may not work correctly. Please use passwordHash instead", "user", user.Name)
+			// 尝试使用明文（某些 cloud-init 版本可能支持，但不保证）
+			// 如果密码无法工作，请使用 passwordHash
+			cloudInit += fmt.Sprintf("    passwd: %s\n", user.Password)
+		}
+
+		// 配置 sudo
+		if user.Sudo != "" {
+			cloudInit += fmt.Sprintf("    sudo: %s\n", user.Sudo)
+		} else {
+			cloudInit += "    sudo: ALL=(ALL) NOPASSWD:ALL\n"
+		}
+
+		// 配置 shell
+		if user.Shell != "" {
+			cloudInit += fmt.Sprintf("    shell: %s\n", user.Shell)
+		} else {
+			cloudInit += "    shell: /bin/bash\n"
+		}
+
+		// 配置 groups
+		if len(user.Groups) > 0 {
+			cloudInit += "    groups:\n"
+			for _, group := range user.Groups {
+				cloudInit += fmt.Sprintf("      - %s\n", group)
+			}
+		} else {
+			// 默认 groups
+			cloudInit += "    groups: sudo, adm, dialout, cdrom, floppy, audio, dip, video, plugdev, netdev\n"
+		}
+
+		// 配置 lock_passwd
+		cloudInit += fmt.Sprintf("    lock_passwd: %v\n", user.LockPasswd)
+
+		// 允许密码认证
+		cloudInit += "\nssh_pwauth: true\n"
+		cloudInit += "disable_root: false\n"
+	}
+
+	// 配置 SSH Key（如果有）
 	if vmp.Spec.SSHKeySecret != "" {
-		// 注意：这里只是占位，实际应该从 Secret 中读取 SSH 公钥
-		cloudInit += "ssh_authorized_keys:\n"
-		cloudInit += fmt.Sprintf("  - <ssh-key-from-secret-%s>\n", vmp.Spec.SSHKeySecret)
+		// 从 Secret 中读取 SSH 公钥
+		secret := &corev1.Secret{}
+		key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmp.Spec.SSHKeySecret}
+		if err := c.Get(ctx, key, secret); err == nil {
+			// 查找 SSH 公钥（通常在 'ssh-publickey' 或 'id_rsa.pub' key 中）
+			var sshKey []byte
+			for _, keyName := range []string{"ssh-publickey", "id_rsa.pub", "authorized_keys", "publickey"} {
+				if val, ok := secret.Data[keyName]; ok {
+					sshKey = val
+					break
+				}
+			}
+			// 如果没找到，尝试第一个非空值
+			if len(sshKey) == 0 {
+				for _, val := range secret.Data {
+					if len(val) > 0 {
+						sshKey = val
+						break
+					}
+				}
+			}
+			if len(sshKey) > 0 {
+				cloudInit += "\nssh_authorized_keys:\n"
+				// 按行分割 SSH 公钥
+				keys := strings.Split(string(sshKey), "\n")
+				for _, key := range keys {
+					key = strings.TrimSpace(key)
+					if key != "" && !strings.HasPrefix(key, "#") {
+						cloudInit += fmt.Sprintf("  - %s\n", key)
+					}
+				}
+			} else {
+				logger.V(1).Info("SSH key not found in Secret", "secret", vmp.Spec.SSHKeySecret)
+			}
+		} else {
+			logger.V(1).Info("Failed to get SSH key Secret", "secret", vmp.Spec.SSHKeySecret, "error", err)
+		}
 	}
 
 	// 配置网络（如果有静态 IP）
+	hasNetworkConfig := false
 	for _, net := range vmp.Spec.Networks {
 		if net.IPConfig != nil && net.IPConfig.Mode == "static" && net.IPConfig.Address != nil {
-			cloudInit += "network:\n"
-			cloudInit += "  version: 2\n"
-			cloudInit += "  ethernets:\n"
+			if !hasNetworkConfig {
+				cloudInit += "\nnetwork:\n"
+				cloudInit += "  version: 2\n"
+				cloudInit += "  ethernets:\n"
+				hasNetworkConfig = true
+			}
 			cloudInit += fmt.Sprintf("    %s:\n", net.Name)
 			cloudInit += "      addresses:\n"
 			cloudInit += fmt.Sprintf("        - %s\n", *net.IPConfig.Address)
@@ -348,7 +442,6 @@ func buildCloudInitData(vmp *vmv1alpha1.Wukong) string {
 					cloudInit += fmt.Sprintf("          - %s\n", dns)
 				}
 			}
-			break // 只配置第一个静态 IP 网络
 		}
 	}
 

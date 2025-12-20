@@ -51,6 +51,10 @@ type WukongSpec struct {
 	// +optional
 	SSHKeySecret string `json:"sshKeySecret,omitempty"`
 
+	// CloudInitUser defines the default user to be created by Cloud-Init
+	// +optional
+	CloudInitUser *CloudInitUserSpec `json:"cloudInitUser,omitempty"`
+
 	// Networks defines the network interfaces for the virtual machine
 	// +optional
 	Networks []NetworkConfig `json:"networks,omitempty"`
@@ -179,6 +183,44 @@ type StartStrategySpec struct {
 	// AutoStart indicates whether to automatically start the VM
 	// +optional
 	AutoStart bool `json:"autoStart,omitempty"`
+}
+
+// CloudInitUserSpec defines the user to be created by Cloud-Init
+type CloudInitUserSpec struct {
+	// Name is the username to be created
+	// +kubebuilder:validation:Required
+	// +required
+	Name string `json:"name"`
+
+	// Password is the password for the user (plain text, will be hashed by Cloud-Init)
+	// Note: For security, consider using PasswordHash instead
+	// +optional
+	Password string `json:"password,omitempty"`
+
+	// PasswordHash is the hashed password (if provided, Password will be ignored)
+	// Password hash can be generated using: openssl passwd -1 <password>
+	// or: python3 -c "import crypt; print(crypt.crypt('password', crypt.mksalt(crypt.METHOD_SHA512)))"
+	// +optional
+	PasswordHash string `json:"passwordHash,omitempty"`
+
+	// Sudo specifies sudo access for the user
+	// Default: "ALL=(ALL) NOPASSWD:ALL"
+	// +optional
+	Sudo string `json:"sudo,omitempty"`
+
+	// Shell is the default shell for the user
+	// Default: "/bin/bash"
+	// +optional
+	Shell string `json:"shell,omitempty"`
+
+	// Groups are additional groups the user should belong to
+	// +optional
+	Groups []string `json:"groups,omitempty"`
+
+	// LockPasswd indicates whether to lock the password
+	// Default: false
+	// +optional
+	LockPasswd bool `json:"lockPasswd,omitempty"`
 }
 
 // WukongStatus defines the observed state of Wukong

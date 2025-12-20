@@ -32,6 +32,24 @@ spec:
   #     ipConfig:
   #       mode: dhcp
   
+  # Cloud-Init 用户配置
+  # 注意：cloud-init 的 passwd 字段需要密码哈希格式
+  # 生成密码哈希: echo -n "your-password" | openssl passwd -1 -stdin
+  # 或: python3 -c "import crypt; print(crypt.crypt('your-password', crypt.mksalt(crypt.METHOD_SHA512)))"
+  cloudInitUser:
+    name: ubuntu
+    # 方法 1: 使用密码哈希（推荐）
+    passwordHash: "$1$7.t8q8zZ$59I1IiMXy5w3gIl5Yrn/4/"  # 替换为实际生成的哈希
+    # 方法 2: 使用明文密码（不推荐，可能不会工作）
+    # password: "ubuntu123"
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: "/bin/bash"
+    groups:
+      - sudo
+      - adm
+      - dialout
+    lockPasswd: false
+  
   # 启动策略：自动启动
   startStrategy:
     autoStart: true

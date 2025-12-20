@@ -39,6 +39,48 @@ spec:
           spec:
             description: spec defines the desired state of Wukong
             properties:
+              cloudInitUser:
+                description: CloudInitUser defines the default user to be created
+                  by Cloud-Init
+                properties:
+                  groups:
+                    description: Groups are additional groups the user should belong
+                      to
+                    items:
+                      type: string
+                    type: array
+                  lockPasswd:
+                    description: |-
+                      LockPasswd indicates whether to lock the password
+                      Default: false
+                    type: boolean
+                  name:
+                    description: Name is the username to be created
+                    type: string
+                  password:
+                    description: |-
+                      Password is the password for the user (plain text, will be hashed by Cloud-Init)
+                      Note: For security, consider using PasswordHash instead
+                    type: string
+                  passwordHash:
+                    description: |-
+                      PasswordHash is the hashed password (if provided, Password will be ignored)
+                      Password hash can be generated using: openssl passwd -1 <password>
+                      or: python3 -c "import crypt; print(crypt.crypt('password', crypt.mksalt(crypt.METHOD_SHA512)))"
+                    type: string
+                  shell:
+                    description: |-
+                      Shell is the default shell for the user
+                      Default: "/bin/bash"
+                    type: string
+                  sudo:
+                    description: |-
+                      Sudo specifies sudo access for the user
+                      Default: "ALL=(ALL) NOPASSWD:ALL"
+                    type: string
+                required:
+                - name
+                type: object
               cpu:
                 description: CPU is the number of CPU cores for the virtual machine
                 maximum: 64
