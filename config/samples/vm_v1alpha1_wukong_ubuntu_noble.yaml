@@ -1,0 +1,33 @@
+apiVersion: vm.novasphere.dev/v1alpha1
+kind: Wukong
+metadata:
+  name: ubuntu-noble-vm
+  labels:
+    app.kubernetes.io/name: novasphere
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  cpu: 2
+  memory: 4Gi
+  
+  # 系统盘：从本地仓库的 Ubuntu Noble 镜像创建
+  # 注意：需要先将本地下载的 .img 文件转换为容器镜像并推送到仓库
+  # 参考 docs/LOCAL_IMAGE_GUIDE.md
+  disks:
+    - name: system
+      size: 30Gi
+      storageClassName: local-path
+      boot: true
+      # 使用本地仓库的镜像（需要先构建并推送）
+      image: "docker://localhost:5000/ubuntu-noble:latest"
+  
+  # 网络配置
+  networks:
+    - name: default
+      type: bridge
+      ipConfig:
+        mode: dhcp
+  
+  # 启动策略：自动启动
+  startStrategy:
+    autoStart: true
+

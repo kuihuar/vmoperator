@@ -1,0 +1,31 @@
+apiVersion: vm.novasphere.dev/v1alpha1
+kind: Wukong
+metadata:
+  name: wukong-with-image
+  labels:
+    app.kubernetes.io/name: novasphere
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  cpu: 2
+  memory: 4Gi
+  
+  # 系统盘：从容器镜像创建
+  disks:
+    - name: system
+      size: 20Gi
+      storageClassName: local-path
+      boot: true
+      # 指定容器镜像 URL（CDI 会从镜像导入数据到 PVC）
+      image: "docker://quay.io/kubevirt/fedora-cloud-container-disk-demo:latest"
+  
+  # 网络配置
+  networks:
+    - name: default
+      type: bridge
+      ipConfig:
+        mode: dhcp
+  
+  # 启动策略：自动启动
+  startStrategy:
+    autoStart: true
+

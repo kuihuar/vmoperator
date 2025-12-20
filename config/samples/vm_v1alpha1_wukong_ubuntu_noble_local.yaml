@@ -1,0 +1,38 @@
+apiVersion: vm.novasphere.dev/v1alpha1
+kind: Wukong
+metadata:
+  name: ubuntu-noble-local
+  labels:
+    app.kubernetes.io/name: novasphere
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  cpu: 1
+  memory: 1Gi
+  
+  # 系统盘：从本地 registry 的镜像创建
+  # 注意：需要先将镜像推送到本地 registry
+  # docker tag novasphere/ubuntu-noble:latest host.docker.internal:5000/ubuntu-noble:latest
+  # docker push host.docker.internal:5000/ubuntu-noble:latest
+  disks:
+    - name: system
+      size: 5Gi
+      # storageClassName: docker-desktop
+      storageClassName: hostpath   # Docker Desktop 默认 StorageClass
+      boot: true
+      # 使用本地 registry 的镜像
+      # image: "docker://host.docker.internal:5000/ubuntu-noble:latest"
+      image: "http://host.docker.internal:8080/images/noble-server-cloudimg-amd64.img"
+
+      
+  
+  # 网络配置
+  # networks:
+  #   - name: default
+  #     type: bridge
+  #     ipConfig:
+  #       mode: dhcp
+  
+  # 启动策略：自动启动
+  startStrategy:
+    autoStart: true
+

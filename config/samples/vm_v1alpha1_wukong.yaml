@@ -1,0 +1,20 @@
+apiVersion: vm.novasphere.dev/v1alpha1
+kind: Wukong
+metadata:
+  labels:
+    app.kubernetes.io/name: novasphere
+    app.kubernetes.io/managed-by: kustomize
+  name: wukong-sample
+spec:
+  cpu: 2
+  memory: 2Gi
+  networks:
+    - name: default
+      type: bridge
+      ipConfig:
+        mode: dhcp
+  disks:
+    - name: system
+      size: 10Gi
+      storageClassName: local-path
+      boot: true

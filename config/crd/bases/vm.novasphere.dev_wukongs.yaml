@@ -1,0 +1,381 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: wukongs.vm.novasphere.dev
+spec:
+  group: vm.novasphere.dev
+  names:
+    kind: Wukong
+    listKind: WukongList
+    plural: wukongs
+    singular: wukong
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Wukong is the Schema for the wukongs API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of Wukong
+            properties:
+              cpu:
+                description: CPU is the number of CPU cores for the virtual machine
+                maximum: 64
+                minimum: 1
+                type: integer
+              disks:
+                description: Disks defines the storage disks for the virtual machine
+                items:
+                  description: DiskConfig defines a storage disk configuration
+                  properties:
+                    boot:
+                      description: Boot indicates whether this is the boot disk
+                      type: boolean
+                    image:
+                      description: |-
+                        Image is the container image URL to create the disk from (uses DataVolume)
+                        If specified, a DataVolume will be created to import the image
+                      type: string
+                    name:
+                      description: Name is the unique name of the disk
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    size:
+                      description: Size is the disk size (e.g., "80Gi", "500G")
+                      pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?$
+                      type: string
+                    storageClassName:
+                      description: StorageClassName is the name of the StorageClass
+                        to use
+                      type: string
+                  required:
+                  - name
+                  - size
+                  - storageClassName
+                  type: object
+                type: array
+              highAvailability:
+                description: HighAvailability defines high availability configuration
+                properties:
+                  antiAffinity:
+                    description: AntiAffinity enables pod anti-affinity to prevent
+                      multiple VMs on the same node
+                    type: boolean
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: NodeSelector is a node selector for scheduling
+                    type: object
+                  restartPolicy:
+                    description: 'RestartPolicy is the restart policy: Always, OnFailure,
+                      or Never'
+                    enum:
+                    - Always
+                    - OnFailure
+                    - Never
+                    type: string
+                  tolerations:
+                    description: Tolerations are tolerations for node taints
+                    items:
+                      description: |-
+                        The pod this Toleration is attached to tolerates any taint that matches
+                        the triple <key,value,effect> using the matching operator <operator>.
+                      properties:
+                        effect:
+                          description: |-
+                            Effect indicates the taint effect to match. Empty means match all taint effects.
+                            When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute.
+                          type: string
+                        key:
+                          description: |-
+                            Key is the taint key that the toleration applies to. Empty means match all taint keys.
+                            If the key is empty, operator must be Exists; this combination means to match all values and all keys.
+                          type: string
+                        operator:
+                          description: |-
+                            Operator represents a key's relationship to the value.
+                            Valid operators are Exists and Equal. Defaults to Equal.
+                            Exists is equivalent to wildcard for value, so that a pod can
+                            tolerate all taints of a particular category.
+                          type: string
+                        tolerationSeconds:
+                          description: |-
+                            TolerationSeconds represents the period of time the toleration (which must be
+                            of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default,
+                            it is not set, which means tolerate the taint forever (do not evict). Zero and
+                            negative values will be treated as 0 (evict immediately) by the system.
+                          format: int64
+                          type: integer
+                        value:
+                          description: |-
+                            Value is the taint value the toleration matches to.
+                            If the operator is Exists, the value should be empty, otherwise just a regular string.
+                          type: string
+                      type: object
+                    type: array
+                type: object
+              memory:
+                description: Memory is the memory size for the virtual machine (e.g.,
+                  "8Gi", "4G")
+                pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?$
+                type: string
+              networks:
+                description: Networks defines the network interfaces for the virtual
+                  machine
+                items:
+                  description: NetworkConfig defines a network interface configuration
+                  properties:
+                    bridgeName:
+                      description: BridgeName is the bridge name (for bridge and ovs
+                        types)
+                      type: string
+                    ipConfig:
+                      description: IPConfig defines the IP configuration for this
+                        network
+                      properties:
+                        address:
+                          description: |-
+                            Address is the IP address and subnet mask (required for static mode)
+                            Format: "192.168.1.10/24"
+                          type: string
+                        dnsServers:
+                          description: DNSServers is a list of DNS server addresses
+                          items:
+                            type: string
+                          type: array
+                        gateway:
+                          description: Gateway is the gateway address (for static
+                            mode)
+                          type: string
+                        mode:
+                          description: 'Mode is the IP acquisition mode: static or
+                            dhcp'
+                          enum:
+                          - static
+                          - dhcp
+                          type: string
+                      required:
+                      - mode
+                      type: object
+                    nadName:
+                      description: |-
+                        NADName is the name of an existing NetworkAttachmentDefinition
+                        If empty, the operator will create a new NAD
+                      type: string
+                    name:
+                      description: Name is the unique name of the network interface
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    type:
+                      description: 'Type is the network type: bridge, macvlan, sriov,
+                        or ovs'
+                      enum:
+                      - bridge
+                      - macvlan
+                      - sriov
+                      - ovs
+                      type: string
+                    vlanId:
+                      description: VLANID is the VLAN ID (1-4094)
+                      maximum: 4094
+                      minimum: 1
+                      type: integer
+                  required:
+                  - name
+                  - type
+                  type: object
+                type: array
+              osImage:
+                description: OSImage is the operating system image for Cloud-Init
+                  configuration
+                type: string
+              sshKeySecret:
+                description: SSHKeySecret is the name of the Secret containing SSH
+                  public keys
+                type: string
+              startStrategy:
+                description: StartStrategy defines the start strategy for the virtual
+                  machine
+                properties:
+                  autoStart:
+                    description: AutoStart indicates whether to automatically start
+                      the VM
+                    type: boolean
+                  runStrategy:
+                    description: 'RunStrategy is the run strategy: Always, RerunOnFailure,
+                      or Manual'
+                    enum:
+                    - Always
+                    - RerunOnFailure
+                    - Manual
+                    type: string
+                type: object
+            required:
+            - cpu
+            - memory
+            type: object
+          status:
+            description: status defines the observed state of Wukong
+            properties:
+              conditions:
+                description: |-
+                  Conditions represent the current state of the Wukong resource
+                  Each condition has a unique type and reflects the status of a specific aspect of the resource
+
+                  Standard condition types include:
+                  - "Ready": the VM is ready and running
+                  - "NetworksConfigured": all networks are configured
+                  - "VolumesBound": all volumes are bound
+
+                  The status of each condition is one of True, False, or Unknown
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              networks:
+                description: Networks represents the status of network interfaces
+                items:
+                  description: NetworkStatus represents the status of a network interface
+                  properties:
+                    interface:
+                      description: Interface is the network interface name in the
+                        VM (e.g., "eth0", "net1")
+                      type: string
+                    ipAddress:
+                      description: IPAddress is the IP address assigned to this interface
+                      type: string
+                    macAddress:
+                      description: MACAddress is the MAC address of this interface
+                      type: string
+                    nadName:
+                      description: NADName is the name of the NetworkAttachmentDefinition
+                        used
+                      type: string
+                    name:
+                      description: Name is the name of the network interface
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              nodeName:
+                description: NodeName is the name of the node where the VM is running
+                type: string
+              phase:
+                description: |-
+                  Phase represents the current phase of the virtual machine
+                  Valid values: Pending, Creating, Running, Stopped, Error
+                enum:
+                - Pending
+                - Creating
+                - Running
+                - Stopped
+                - Error
+                type: string
+              vmName:
+                description: VMName is the name of the corresponding KubeVirt VirtualMachine
+                type: string
+              volumes:
+                description: Volumes represents the status of storage volumes
+                items:
+                  description: VolumeStatus represents the status of a storage volume
+                  properties:
+                    bound:
+                      description: Bound indicates whether the PVC is bound
+                      type: boolean
+                    name:
+                      description: Name is the name of the volume
+                      type: string
+                    pvcName:
+                      description: PVCName is the name of the PersistentVolumeClaim
+                      type: string
+                    size:
+                      description: Size is the actual size of the volume
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
