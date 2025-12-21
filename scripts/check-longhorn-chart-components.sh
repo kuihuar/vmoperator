@@ -85,20 +85,49 @@ grep -E "^kind: Service|^\s+name:" "$TEMP_DIR/longhorn-manifest.yaml" | grep -A 
 # 检查 admission-webhook
 echo ""
 echo_step "4. 检查 admission-webhook 组件"
-WEBHOOK_DEPLOYMENT=$(grep -A 50 "kind: Deployment" "$TEMP_DIR/longhorn-manifest.yaml" | grep -B 5 -A 45 "admission-webhook" | head -50)
-WEBHOOK_DAEMONSET=$(grep -A 50 "kind: DaemonSet" "$TEMP_DIR/longhorn-manifest.yaml" | grep -B 5 -A 45 "admission-webhook" | head -50)
+echo_info "搜索 admission-webhook 相关资源..."
 
-if [ -n "$WEBHOOK_DEPLOYMENT" ] || [ -n "$WEBHOOK_DAEMONSET" ]; then
-    echo_info "✓ 找到 admission-webhook 资源定义"
-    if [ -n "$WEBHOOK_DEPLOYMENT" ]; then
-        echo_info "  类型: Deployment"
-        echo "$WEBHOOK_DEPLOYMENT" | grep -E "replicas:|enabled:" | head -5
+# 更全面的搜索
+WEBHOOK_RESOURCES=$(grep -i "admission.*webhook\|webhook.*admission" "$TEMP_DIR/longhorn-manifest.yaml" | head -20)
+
+if [ -n "$WEBHOOK_RESOURCES" ]; then
+    echo_info "✓ 找到 admission-webhook 相关内容"
+    echo "$WEBHOOK_RESOURCES" | head -10
+    
+    # 查找 Deployment
+    WEBHOOK_DEPLOYMENT_LINE=$(grep -n "admission.*webhook" "$TEMP_DIR/longhorn-manifest.yaml" | grep -i "deployment\|name:" | head -5)
+    if [ -n "$WEBHOOK_DEPLOYMENT_LINE" ]; then
+        echo_info "  找到 Deployment 相关定义"
+        # 获取 Deployment 定义的行号
+        DEPLOYMENT_LINE=$(echo "$WEBHOOK_DEPLOYMENT_LINE" | awk -F: '{print $1}')
+        sed -n "${DEPLOYMENT_LINE},$((DEPLOYMENT_LINE+50))p" "$TEMP_DIR/longhorn-manifest.yaml" | grep -E "kind:|name:|replicas:" | head -10
     fi
-    if [ -n "$WEBHOOK_DAEMONSET" ]; then
-        echo_info "  类型: DaemonSet"
+    
+    # 查找 DaemonSet
+    WEBHOOK_DAEMONSET_LINE=$(grep -n "admission.*webhook" "$TEMP_DIR/longhorn-manifest.yaml" | grep -i "daemonset\|name:" | head -5)
+    if [ -n "$WEBHOOK_DAEMONSET_LINE" ]; then
+        echo_info "  找到 DaemonSet 相关定义"
+        DAEMONSET_LINE=$(echo "$WEBHOOK_DAEMONSET_LINE" | awk -F: '{print $1}')
+        sed -n "${DAEMONSET_LINE},$((DAEMONSET_LINE+50))p" "$TEMP_DIR/longhorn-manifest.yaml" | grep -E "kind:|name:" | head -10
+    fi
+    
+    # 查找 Service
+    WEBHOOK_SERVICE_LINE=$(grep -n "admission.*webhook" "$TEMP_DIR/longhorn-manifest.yaml" | grep -i "service\|name:" | head -5)
+    if [ -n "$WEBHOOK_SERVICE_LINE" ]; then
+        echo_info "  找到 Service 定义"
     fi
 else
-    echo_warn "✗ 未找到 admission-webhook 资源定义"
+    echo_warn "✗ 未在 Chart 清单中找到 admission-webhook 资源定义"
+    echo_info "尝试查找所有 webhook 相关内容..."
+    grep -i "webhook" "$TEMP_DIR/longhorn-manifest.yaml" | head -20
+fi
+
+# 检查是否有条件启用/禁用
+echo ""
+echo_info "检查是否有条件渲染（可能在 values 中控制）..."
+if grep -q "{{.*admission.*webhook.*}}" "$TEMP_DIR/longhorn-manifest.yaml" || grep -q "{{.*webhook.*admission.*}}" "$TEMP_DIR/longhorn-manifest.yaml"; then
+    echo_info "✓ 找到条件渲染（可能在 values.yaml 中控制启用/禁用）"
+    grep -i "{{.*admission.*webhook.*}}\|{{.*webhook.*admission.*}}" "$TEMP_DIR/longhorn-manifest.yaml" | head -10
 fi
 
 # 检查 values 中是否有控制开关
@@ -111,18 +140,55 @@ helm show values longhorn/longhorn --version "$LONGHORN_VERSION" > "$TEMP_DIR/va
 if [ -f "$TEMP_DIR/values.yaml" ]; then
     echo_info "检查 admission-webhook 相关配置..."
     
-    # 检查是否有 enabled 选项
-    if grep -i "admission.*webhook" "$TEMP_DIR/values.yaml" | grep -i "enabled"; then
-        echo_info "找到 admission-webhook 的 enabled 选项："
-        grep -i "admission.*webhook" "$TEMP_DIR/values.yaml" | grep -i "enabled" | head -5
-    else
-        echo_info "未找到 admission-webhook 的 enabled 选项（可能默认启用且不可禁用）"
-    fi
+    # 更全面的搜索
+    WEBHOOK_VALUES=$(grep -i -E "admission|webhook" "$TEMP_DIR/values.yaml" | grep -v "^#" | head -30)
     
-    # 检查其他相关配置
+    if [ -n "$WEBHOOK_VALUES" ]; then
+        echo_info "找到 webhook/admission 相关配置："
+        echo "$WEBHOOK_VALUES"
+        
+        # 检查是否有 enabled 选项
+        if echo "$WEBHOOK_VALUES" | grep -i "enabled"; then
+            echo_info ""
+            echo_info "✓ 找到 enabled 选项（可以控制启用/禁用）："
+            echo "$WEBHOOK_VALUES" | grep -i "enabled"
+        else
+            echo_info ""
+            echo_info "未找到 enabled 选项（可能默认启用且不可禁用）"
+        fi
+    else
+        echo_warn "未找到 admission-webhook 相关配置"
+    fi
+fi
+
+# 额外检查：查看实际安装的资源
+echo ""
+echo_step "6. 检查当前集群中已安装的资源"
+if kubectl get namespace longhorn-system &> /dev/null; then
+    echo_info "检查当前集群中的 admission-webhook 资源..."
+    
     echo ""
-    echo_info "admission-webhook 相关配置："
-    grep -i "admission.*webhook" "$TEMP_DIR/values.yaml" | head -20 || echo_warn "未找到相关配置"
+    echo_info "Services:"
+    kubectl get svc -n longhorn-system | grep -i "admission\|webhook" || echo_warn "未找到相关 Service"
+    
+    echo ""
+    echo_info "Pods:"
+    kubectl get pods -n longhorn-system | grep -i "admission\|webhook" || echo_warn "未找到相关 Pods"
+    
+    echo ""
+    echo_info "Deployments:"
+    kubectl get deployment -n longhorn-system | grep -i "admission\|webhook" || echo_warn "未找到相关 Deployment"
+    
+    echo ""
+    echo_info "DaemonSets:"
+    kubectl get daemonset -n longhorn-system | grep -i "admission\|webhook" || echo_warn "未找到相关 DaemonSet"
+    
+    # 检查是否有 ValidatingWebhookConfiguration 或 MutatingWebhookConfiguration
+    echo ""
+    echo_info "Webhook Configurations:"
+    kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration | grep -i "longhorn\|admission" || echo_warn "未找到相关 Webhook Configuration"
+else
+    echo_warn "longhorn-system 命名空间不存在（Longhorn 可能尚未安装）"
 fi
 
 # 总结
@@ -146,16 +212,30 @@ echo "  ✅ longhorn-backing-image-manager (DaemonSet) - 备份镜像管理器"
 echo "  ✅ longhorn-engine-image (DaemonSet) - 引擎镜像"
 echo ""
 
-if [ -n "$WEBHOOK_DEPLOYMENT" ] || [ -n "$WEBHOOK_DAEMONSET" ]; then
+# 检查是否在 Chart 或集群中找到
+if [ -n "$WEBHOOK_RESOURCES" ] || kubectl get svc -n longhorn-system longhorn-admission-webhook &> /dev/null; then
     echo "Webhook 组件："
-    echo "  ✅ longhorn-admission-webhook (Deployment/DaemonSet) - 准入控制器"
+    if kubectl get svc -n longhorn-system longhorn-admission-webhook &> /dev/null; then
+        echo "  ✅ longhorn-admission-webhook Service 存在（已安装）"
+        echo "  ⚠️  但 Pod 可能不存在或未运行"
+    fi
+    if [ -n "$WEBHOOK_RESOURCES" ]; then
+        echo "  ✅ Chart 中包含 admission-webhook 定义"
+    fi
     echo ""
     echo_warn "admission-webhook 是必需的组件，用于："
     echo "  - 验证和修改 Longhorn 资源"
     echo "  - 资源验证和默认值设置"
     echo "  - Manager 启动时需要访问此服务"
 else
-    echo_warn "未找到 admission-webhook 定义，可能在较新版本中有变化"
+    echo_warn "未找到 admission-webhook 定义"
+    echo ""
+    echo_info "可能的情况："
+    echo "  1. 在 v1.10.1 中 admission-webhook 可能已被移除或重构"
+    echo "  2. 可能集成到 longhorn-manager 中"
+    echo "  3. 可能使用不同的实现方式"
+    echo ""
+    echo_info "但您的集群中有 Service，说明安装时创建了，只是 Pod 不存在"
 fi
 
 echo ""
