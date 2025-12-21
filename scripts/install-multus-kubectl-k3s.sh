@@ -230,6 +230,35 @@ EOF
 sudo chmod 644 "$DAEMON_CONFIG"
 echo_info "  ✓ daemon-config.json 已创建"
 
+# 8.1 创建 Multus kubeconfig 文件
+echo ""
+echo_info "8.1 创建 Multus kubeconfig 文件"
+echo ""
+
+KUBECONFIG_FILE="$CNI_CONF_DIR/multus.d/multus.kubeconfig"
+
+if [ ! -f "$KUBECONFIG_FILE" ]; then
+    echo_info "  创建 kubeconfig 文件: $KUBECONFIG_FILE"
+    
+    # 使用 k3s kubeconfig 创建 Multus kubeconfig
+    K3S_KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
+    if [ -f "$K3S_KUBECONFIG" ]; then
+        echo_info "  从 k3s kubeconfig 创建..."
+        sudo cp "$K3S_KUBECONFIG" "$KUBECONFIG_FILE"
+        
+        # 修改 server 地址为集群内部地址
+        sudo sed -i 's|server: https://127.0.0.1:6443|server: https://kubernetes.default.svc:443|g' "$KUBECONFIG_FILE"
+        
+        sudo chmod 644 "$KUBECONFIG_FILE"
+        echo_info "  ✓ kubeconfig 已创建"
+    else
+        echo_warn "  ⚠️  未找到 k3s kubeconfig，kubeconfig 可能未创建"
+        echo_warn "  稍后运行: ./scripts/fix-multus-kubeconfig.sh 来创建"
+    fi
+else
+    echo_info "  ✓ kubeconfig 文件已存在: $KUBECONFIG_FILE"
+fi
+
 # 9. 验证安装
 echo ""
 echo_info "9. 验证安装"
