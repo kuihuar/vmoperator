@@ -1,29 +1,31 @@
 apiVersion: vm.novasphere.dev/v1alpha1
 kind: Wukong
 metadata:
-  name: ubuntu-longhorn-test
+  name: ubuntu-recommended
   labels:
     app.kubernetes.io/name: novasphere
     app.kubernetes.io/managed-by: kustomize
 spec:
-  cpu: 1
-  memory: 2Gi
+  cpu: 2
+  memory: 4Gi
   
-  # 使用 Longhorn StorageClass
+  # 推荐配置：系统盘和数据盘分离
   disks:
-    # 系统盘：20Gi（适合开发/测试环境）
-    # 生产环境建议 30-50Gi
+    # 系统盘：30Gi（适合大多数 Linux 系统）
+    # - 开发/测试环境: 20Gi
+    # - 生产环境: 30-50Gi
     - name: system
-      size: 20Gi
-      storageClassName: longhorn  # 使用 Longhorn
+      size: 30Gi
+      storageClassName: longhorn
       boot: true
-      # 使用 HTTP 源下载镜像
       image: "http://192.168.1.141:8080/images/noble-server-cloudimg-amd64.img"
     
-    # 数据盘：50Gi（测试系统盘和数据盘分离）
-    # 生产环境根据实际需求调整（100Gi-2Ti）
+    # 数据盘：100Gi（根据实际需求调整）
+    # - 小型应用: 50-100Gi
+    # - 中型应用: 100-200Gi
+    # - 大型应用/数据库: 200Gi-2Ti
     - name: data
-      size: 50Gi
+      size: 100Gi
       storageClassName: longhorn
       boot: false
   
