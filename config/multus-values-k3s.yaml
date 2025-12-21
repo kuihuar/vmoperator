@@ -1,0 +1,43 @@
+# Multus CNI Helm Chart Values for k3s
+# 参考: https://docs.k3s.io/networking/multus-ipams
+# 使用 rke2-multus Helm Chart (推荐用于 k3s)
+
+# 基础配置
+config:
+  fullnameOverride: multus
+  cni_conf:
+    # k3s 特定的 CNI 配置目录
+    confDir: /var/lib/rancher/k3s/agent/etc/cni/net.d
+    # k3s 新的固定 CNI 二进制路径 (v1.28.15+, v1.29.10+, v1.30.6+, v1.31.2+)
+    # 旧版本使用: /var/lib/rancher/k3s/data/current/bin
+    binDir: /var/lib/rancher/k3s/data/cni/
+    # Multus kubeconfig 路径
+    kubeconfig: /var/lib/rancher/k3s/agent/etc/cni/net.d/multus.d/multus.kubeconfig
+    # Multus 自动配置目录 (rke2-multus >= v4.2.202)
+    multusAutoconfigDir: /var/lib/rancher/k3s/agent/etc/cni/net.d
+
+# 镜像配置（可选，使用默认值）
+# image:
+#   registry: docker.io
+#   repository: nfvpe/multus
+#   tag: v4.0.2
+#   pullPolicy: IfNotPresent
+
+# 节点选择器（可选）
+# labels:
+#   nodeSelector:
+#     kubernetes.io/arch: amd64
+
+# IPAM 插件配置（可选）
+# 如果需要使用 Whereabouts IPAM，取消下面的注释
+# rke2-whereabouts:
+#   fullnameOverride: whereabouts
+#   enabled: true
+#   cniConf:
+#     confDir: /var/lib/rancher/k3s/agent/etc/cni/net.d
+#     binDir: /var/lib/rancher/k3s/data/cni/
+
+# 如果需要使用 DHCP IPAM，取消下面的注释
+# manifests:
+#   dhcpDaemonSet: true
+
