@@ -34,10 +34,11 @@ kubectl get pods -n longhorn-system
 3. [存储路径配置问题](#问题3-存储路径配置问题)
 
 ### 🟠 安装过程问题
-4. [longhorn-manager CrashLoopBackOff](#问题4-longhorn-manager-crashloopbackoff)
-   - [DNS 解析失败（k3s 特定问题）](#问题4a-dns-解析失败-k3s-特定问题) ⭐
-5. [longhorn-driver-deployer 卡在 Init:0/1](#问题5-longhorn-driver-deployer-卡在-init01)
-6. [CSI Driver 未安装](#问题6-csi-driver-未安装)
+4. [Multus Pod CrashLoopBackOff（配置文件缺失）](#问题4-multus-pod-crashloopbackoff-配置文件缺失) ⭐⭐
+5. [longhorn-manager CrashLoopBackOff](#问题5-longhorn-manager-crashloopbackoff)
+   - [DNS 解析失败（k3s 特定问题）](#问题5a-dns-解析失败-k3s-特定问题) ⭐
+6. [longhorn-driver-deployer 卡在 Init:0/1](#问题6-longhorn-driver-deployer-卡在-init01)
+7. [CSI Driver 未安装](#问题7-csi-driver-未安装)
 
 ### 🟡 安装后问题
 7. [PVC 一直处于 Pending 状态](#问题7-pvc-一直处于-pending-状态)
@@ -235,7 +236,97 @@ sudo chmod 755 /mnt/longhorn
 
 ## 🟠 安装过程问题
 
-### 问题 4: longhorn-manager CrashLoopBackOff
+### 问题 4: Multus Pod CrashLoopBackOff（配置文件缺失）
+
+**问题描述**:
+```
+Multus Pod 一直重启，状态为 CrashLoopBackOff，错误信息：
+open /etc/cni/net.d/multus.d/daemon-config.json: no such file or directory
+```
+
+**原因分析**:
+- Multus 需要在节点的 CNI 配置目录中创建配置文件
+- k3s 使用非标准路径：`/var/lib/rancher/k3s/agent/etc/cni/net.d/`
+- 配置文件 `multus.d/daemon-config.json` 缺失导致 Multus 无法启动
+
+**解决方案**:
+
+#### 方法 1: 使用修复脚本（推荐）
+
+```bash
+# 运行自动修复脚本
+./scripts/fix-multus-config-missing.sh
+```
+
+脚本会自动：
+1. 创建 `multus.d` 目录
+2. 创建 `daemon-config.json` 配置文件
+3. 创建 Multus 主配置文件（如果需要）
+4. 重启 Multus Pod
+
+#### 方法 2: 手动修复
+
+```bash
+# 1. 在节点上创建 multus.d 目录
+sudo mkdir -p /var/lib/rancher/k3s/agent/etc/cni/net.d/multus.d
+
+# 2. 创建 daemon-config.json 配置文件
+sudo tee /var/lib/rancher/k3s/agent/etc/cni/net.d/multus.d/daemon-config.json > /dev/null <<EOF
+{
+  "binDir": "/opt/cni/bin",
+  "confDir": "/etc/cni/net.d",
+  "cniVersion": "0.3.1",
+  "logLevel": "verbose",
+  "logFile": "/var/log/multus.log"
+}
+EOF
+
+# 3. 设置权限
+sudo chmod 644 /var/lib/rancher/k3s/agent/etc/cni/net.d/multus.d/daemon-config.json
+
+# 4. 重启 Multus Pod
+kubectl delete pod -n kube-system -l app=multus --force --grace-period=0
+
+# 5. 等待 Pod 重新创建并检查状态
+sleep 10
+kubectl get pods -n kube-system -l app=multus
+```
+
+#### 方法 3: 如果 Multus DaemonSet 挂载路径不正确
+
+检查 Multus DaemonSet 是否挂载了正确的 k3s CNI 路径：
+
+```bash
+# 检查 DaemonSet 配置
+kubectl get daemonset -n kube-system kube-multus-ds -o yaml | grep -A 10 "volumes:"
+
+# 如果路径不正确，修复 DaemonSet（参考问题 4.1）
+./scripts/fix-multus-k3s.sh
+```
+
+**验证步骤**:
+```bash
+# 1. 检查配置文件是否存在
+sudo ls -la /var/lib/rancher/k3s/agent/etc/cni/net.d/multus.d/
+
+# 2. 检查 Multus Pod 状态
+kubectl get pods -n kube-system -l app=multus
+
+# 3. 查看 Multus 日志（应该没有错误）
+kubectl logs -n kube-system -l app=multus --tail=20
+
+# 应该看到类似输出：
+# [verbose] multus-daemon started
+# [info] Found primary CNI plugin: flannel
+```
+
+**相关文档**:
+- [修复 Multus k3s 配置](FIX_MULTUS_K3S.md)
+- [Multus 安装指南](MULTUS_INSTALLATION.md)
+
+---
+
+### 问题 5: longhorn-manager CrashLoopBackOff
 
 **问题描述**:
 ```
