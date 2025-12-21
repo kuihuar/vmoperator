@@ -5,7 +5,21 @@
 set -e
 
 INSTALL_METHOD="${1:-kubectl}"  # kubectl 或 helm
-LONGHORN_VERSION="${2:-v1.6.0}"
+LONGHORN_VERSION_INPUT="${2:-latest}"  # latest 或具体版本如 v1.6.0
+
+# 获取版本
+if [ "$LONGHORN_VERSION_INPUT" = "latest" ]; then
+    echo "获取最新 Longhorn 版本..."
+    LONGHORN_VERSION=$(curl -s https://api.github.com/repos/longhorn/longhorn/releases/latest | grep tag_name | cut -d '"' -f 4)
+    if [ -z "$LONGHORN_VERSION" ]; then
+        echo "⚠️  无法获取最新版本，使用默认版本 v1.6.0"
+        LONGHORN_VERSION="v1.6.0"
+    else
+        echo "✓ 最新版本: $LONGHORN_VERSION"
+    fi
+else
+    LONGHORN_VERSION="$LONGHORN_VERSION_INPUT"
+fi
 
 echo "=== 安装 Longhorn 存储 ==="
 echo "安装方式: $INSTALL_METHOD"
@@ -87,21 +101,24 @@ if [ "$INSTALL_METHOD" = "helm" ]; then
         read -p "是否升级? (y/N): " -n 1 -r
         echo ""
         if [[ $REPLY =~ ^[Yy]$ ]]; then
+            HELM_VERSION=$(echo "$LONGHORN_VERSION" | sed 's/^v//')
             helm upgrade longhorn longhorn/longhorn \
                 --namespace longhorn-system \
-                --version "$LONGHORN_VERSION" \
+                --version "$HELM_VERSION" \
                 --create-namespace
         else
             echo "已取消"
             exit 0
         fi
     else
-        # 安装 Longhorn
-        echo "安装 Longhorn..."
-        helm install longhorn longhorn/longhorn \
-            --namespace longhorn-system \
-            --create-namespace \
-            --version "$LONGHORN_VERSION"
+    # 安装 Longhorn
+    # Helm 版本需要移除 v 前缀
+    HELM_VERSION=$(echo "$LONGHORN_VERSION" | sed 's/^v//')
+    echo "安装 Longhorn (Helm Chart 版本: $HELM_VERSION)..."
+    helm install longhorn longhorn/longhorn \
+        --namespace longhorn-system \
+        --create-namespace \
+        --version "$HELM_VERSION"
         echo "✓ Longhorn Helm Chart 已安装"
     fi
     

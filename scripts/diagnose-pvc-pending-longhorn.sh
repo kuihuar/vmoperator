@@ -149,7 +149,11 @@ if ! kubectl get csidriver driver.longhorn.io &>/dev/null; then
 fi
 
 # 检查 CSI Pods
-CSI_RUNNING=$(kubectl get pods -n longhorn-system | grep -E "csi-provisioner|csi-attacher" | grep -c "Running" || echo "0")
+CSI_RUNNING=$(kubectl get pods -n longhorn-system 2>/dev/null | grep -E "csi-provisioner|csi-attacher" | grep -c "Running" || echo "0")
+CSI_RUNNING=$(echo "$CSI_RUNNING" | tr -d ' \n' | head -1)  # 清理空格和换行
+if [ -z "$CSI_RUNNING" ] || [ "$CSI_RUNNING" = "" ]; then
+    CSI_RUNNING=0
+fi
 if [ "$CSI_RUNNING" -lt 2 ]; then
     echo "❌ 问题 2: CSI 组件未完全运行"
     echo "   解决: 检查 CSI Pods 状态和日志"
