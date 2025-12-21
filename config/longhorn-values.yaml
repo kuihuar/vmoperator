@@ -1,18 +1,57 @@
 # Longhorn Helm Chart Values
 # 用于单节点 k3s 环境的推荐配置
+#
+# ⚠️ 重要说明：
+# 此配置文件只会覆盖指定的配置项，Helm Chart 会默认安装所有 Longhorn 核心组件：
+# - longhorn-manager (DaemonSet, 每个节点一个)
+# - longhorn-ui (Deployment, Web UI)
+# - longhorn-admission-webhook (DaemonSet/Deployment)
+# - longhorn-driver-deployer (Job, CSI Driver 安装)
+# - longhorn-csi-plugin (DaemonSet, CSI 插件，每个节点一个)
+# - longhorn-csi-attacher (Deployment, CSI 附加器)
+# - longhorn-csi-provisioner (Deployment, CSI 供应器)
+# - longhorn-csi-resizer (Deployment, CSI 扩展器)
+# - longhorn-csi-snapshotter (Deployment, CSI 快照器，可选)
+# - longhorn-backing-image-manager (DaemonSet, 备份镜像管理器)
+# - longhorn-engine-image (DaemonSet, 引擎镜像)
+#
+# 本配置主要自定义：
+# 1. 默认副本数（单节点环境）
+# 2. 数据路径（可选）
+# 3. 资源限制（可选）
+# 4. StorageClass 配置
 
 # 默认设置
 defaultSettings:
   # 单节点环境：设置副本数为 1
+  # ⚠️ 注意：副本数不能设置为 0，最小值为 1
+  # - 1: 单节点环境的标准配置（数据只有一份副本，无冗余）
+  # - 3: 多节点生产环境的推荐配置（数据有 3 份副本，提供高可用）
+  # - 0: 不支持，会导致数据无法存储
   defaultReplicaCount: "1"
   
-  # 默认数据路径（可选，默认是 /var/lib/longhorn）
-  # defaultDataPath: "/mnt/longhorn"
+  # 默认数据路径配置说明：
+  # 
+  # 选项 1: 使用默认路径（开发测试环境）
+  #   - 路径: /var/lib/longhorn
+  #   - 优点: 简单，无需额外配置
+  #   - 缺点: 与系统共享磁盘，可能影响性能
+  #   - 配置: 注释掉下面这行，使用默认值
+  # 
+  # 选项 2: 使用独立数据盘（生产环境推荐）⭐
+  #   - 路径: /mnt/longhorn
+  #   - 优点: 性能更好，不影响系统盘
+  #   - 缺点: 需要额外准备磁盘并挂载
+  #   - 配置: 取消注释下面这行，并确保 /mnt/longhorn 已挂载
+  # 
+  # 当前配置: 使用默认路径（如果需要使用独立磁盘，请取消注释下一行）
+  defaultDataPath: "/mnt/longhorn"
 
 # 持久化存储配置
 persistence:
+  # 创建默认的 StorageClass
   defaultClass: true
-  defaultClassReplicaCount: 1
+  # defaultClassReplicaCount: 1  # 可以省略，会使用 defaultSettings.defaultReplicaCount 的值
 
 # 资源限制（根据实际情况调整）
 resources:
