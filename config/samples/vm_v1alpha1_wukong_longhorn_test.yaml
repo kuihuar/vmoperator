@@ -1,0 +1,43 @@
+apiVersion: vm.novasphere.dev/v1alpha1
+kind: Wukong
+metadata:
+  name: ubuntu-longhorn-test
+  labels:
+    app.kubernetes.io/name: novasphere
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  cpu: 1
+  memory: 2Gi
+  
+  # 使用 Longhorn StorageClass
+  disks:
+    # 系统盘
+    - name: system
+      size: 10Gi
+      storageClassName: longhorn  # 使用 Longhorn
+      boot: true
+      # 使用 HTTP 源下载镜像
+      image: "http://192.168.1.141:8080/images/noble-server-cloudimg-amd64.img"
+    
+    # 数据盘（可选，测试系统盘和数据盘分离）
+    - name: data
+      size: 5Gi
+      storageClassName: longhorn
+      boot: false
+  
+  # Cloud-Init 用户配置
+  cloudInitUser:
+    name: ubuntu
+    passwordHash: "$1$7.t8q8zZ$59I1IiMXy5w3gIl5Yrn/4/"  # 替换为实际生成的哈希
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: "/bin/bash"
+    groups:
+      - sudo
+      - adm
+      - dialout
+    lockPasswd: false
+  
+  # 启动策略：自动启动
+  startStrategy:
+    autoStart: true
+
