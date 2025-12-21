@@ -1,0 +1,65 @@
+# Multus CNI Helm Chart Values
+# 用于 k3s 环境的配置
+
+# 镜像配置
+image:
+  registry: docker.io
+  repository: nfvpe/multus
+  tag: v4.0.2  # 使用最新稳定版本
+  pullPolicy: IfNotPresent
+
+# 节点选择器
+labels:
+  nodeSelector:
+    kubernetes.io/arch: amd64
+
+# Multus 配置参数（k3s 特定配置）
+config:
+  cni_conf:
+    name: multus-cni-network
+    type: multus
+    kubeconfig: /etc/cni/net.d/multus.d/multus.kubeconfig
+    cniVersion: "0.3.1"
+    # ⚠️ k3s 使用非标准路径，这里配置为 Pod 内的路径
+    confDir: /etc/cni/net.d
+    cniDir: /var/lib/cni/multus
+    binDir: /opt/cni/bin
+    logFile: /var/log/multus.log
+    logLevel: verbose  # 可选: panic, error, warn, info, verbose, debug
+    capabilities:
+      portMappings: true
+    readinessindicatorfile: ""
+    namespaceIsolation: false
+    # k3s 默认使用 Flannel 作为 clusterNetwork
+    clusterNetwork: default
+    defaultNetwork: []
+    delegates: []
+    systemNamespaces:
+      - "kube-system"
+
+# Pod 资源限制
+pod:
+  resources:
+    enabled: false
+    multus:
+      requests:
+        memory: "128Mi"
+        cpu: "250m"
+      limits:
+        memory: "1024Mi"
+        cpu: "2000m"
+
+# 挂载配置（k3s 特定路径）
+mounts:
+  cni:
+    # k3s 的 CNI 配置目录
+    hostPath: /var/lib/rancher/k3s/agent/etc/cni/net.d
+    mountPath: /etc/cni/net.d
+  cnibin:
+    # k3s 的 CNI 二进制目录
+    hostPath: /var/lib/rancher/k3s/data/current/bin
+    mountPath: /host/opt/cni/bin
+  multusSocket:
+    hostPath: /run/multus
+    mountPath: /run/multus
+
