@@ -53,19 +53,73 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 echo ""
 
-# 5. 清空所有磁盘配置
-echo "5. 清空所有磁盘配置..."
+# 5. 先禁用所有磁盘并请求驱逐副本
+echo "5. 禁用所有磁盘并请求驱逐副本..."
+CURRENT_DISKS=$(kubectl get nodes.longhorn.io -n longhorn-system "$NODE_NAME" -o jsonpath='{.spec.disks}' 2>/dev/null)
+if [ -n "$CURRENT_DISKS" ] && [ "$CURRENT_DISKS" != "null" ]; then
+    echo "禁用所有磁盘的调度..."
+    # 获取所有磁盘名称
+    DISK_NAMES=$(kubectl get nodes.longhorn.io -n longhorn-system "$NODE_NAME" -o jsonpath='{.spec.disks}' | python3 -c "import sys, json; data=json.load(sys.stdin); print(' '.join(data.keys()))" 2>/dev/null || echo "")
+    
+    if [ -n "$DISK_NAMES" ]; then
+        # 构建 patch，禁用所有磁盘
+        PATCH_DISABLE='{"spec":{"disks":{'
+        FIRST=true
+        for disk_name in $DISK_NAMES; do
+            DISK_PATH_VAL=$(kubectl get nodes.longhorn.io -n longhorn-system "$NODE_NAME" -o jsonpath="{.spec.disks.$disk_name.path}" 2>/dev/null)
+            if [ -n "$DISK_PATH_VAL" ]; then
+                if [ "$FIRST" = true ]; then
+                    FIRST=false
+                else
+                    PATCH_DISABLE="${PATCH_DISABLE},"
+                fi
+                PATCH_DISABLE="${PATCH_DISABLE}\"$disk_name\":{\"allowScheduling\":false,\"evictionRequested\":true,\"path\":\"$DISK_PATH_VAL\",\"storageReserved\":0,\"tags\":[]}"
+            fi
+        done
+        PATCH_DISABLE="${PATCH_DISABLE}}}}"
+        
+        kubectl patch nodes.longhorn.io -n longhorn-system "$NODE_NAME" --type merge -p "$PATCH_DISABLE" || true
+        echo "✓ 所有磁盘调度已禁用"
+        
+        # 等待副本迁移
+        echo "等待副本迁移（这可能需要几分钟）..."
+        for i in {1..60}; do
+            TOTAL_REPLICAS=0
+            for disk_name in $DISK_NAMES; do
+                REPLICAS=$(kubectl get nodes.longhorn.io -n longhorn-system "$NODE_NAME" -o jsonpath="{.status.diskStatus.$disk_name.scheduledReplica}" 2>/dev/null)
+                if [ -n "$REPLICAS" ] && [ "$REPLICAS" != "null" ] && [ "$REPLICAS" != "{}" ]; then
+                    COUNT=$(echo "$REPLICAS" | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data))" 2>/dev/null || echo "0")
+                    TOTAL_REPLICAS=$((TOTAL_REPLICAS + COUNT))
+                fi
+            done
+            
+            if [ "$TOTAL_REPLICAS" -eq 0 ]; then
+                echo "✓ 所有副本已迁移"
+                break
+            else
+                echo "  等待中... ($i/60) - 剩余副本: $TOTAL_REPLICAS"
+            fi
+            sleep 2
+        done
+    fi
+else
+    echo "没有需要禁用的磁盘配置"
+fi
+echo ""
+
+# 6. 清空所有磁盘配置
+echo "6. 清空所有磁盘配置..."
 PATCH='{"spec":{"disks":null}}'
 kubectl patch nodes.longhorn.io -n longhorn-system "$NODE_NAME" --type merge -p "$PATCH"
 echo "✓ 所有磁盘配置已清空"
 echo ""
 
-# 6. 等待清理完成
-echo "6. 等待清理完成..."
+# 7. 等待清理完成
+echo "7. 等待清理完成..."
 sleep 5
 
-# 7. 清理磁盘路径（可选）
-echo "7. 清理磁盘路径（可选）..."
+# 8. 清理磁盘路径（可选）
+echo "8. 清理磁盘路径（可选）..."
 if [ -d "$DISK_PATH" ]; then
     # 检查是否有 Longhorn 配置文件
     if [ -f "$DISK_PATH/longhorn-disk.cfg" ]; then
@@ -100,8 +154,8 @@ else
 fi
 echo ""
 
-# 8. 清理 /var/lib/longhorn（如果存在）
-echo "8. 清理 /var/lib/longhorn（如果存在）..."
+# 9. 清理 /var/lib/longhorn（如果存在）
+echo "9. 清理 /var/lib/longhorn（如果存在）..."
 if [ -d "/var/lib/longhorn" ] && [ "$DISK_PATH" != "/var/lib/longhorn" ]; then
     if [ -f "/var/lib/longhorn/longhorn-disk.cfg" ]; then
         echo "删除 /var/lib/longhorn 的配置文件..."
@@ -111,12 +165,12 @@ if [ -d "/var/lib/longhorn" ] && [ "$DISK_PATH" != "/var/lib/longhorn" ]; then
 fi
 echo ""
 
-# 9. 等待一下
-echo "9. 等待系统同步..."
+# 10. 等待一下
+echo "10. 等待系统同步..."
 sleep 3
 
-# 10. 重新配置磁盘
-echo "10. 重新配置磁盘..."
+# 11. 重新配置磁盘
+echo "11. 重新配置磁盘..."
 DISK_NAME="data-disk"
 if [ "$DISK_PATH" = "/var/lib/longhorn" ]; then
     DISK_NAME="default-disk"
@@ -150,8 +204,8 @@ else
 fi
 echo ""
 
-# 11. 验证配置
-echo "11. 验证配置..."
+# 12. 验证配置
+echo "12. 验证配置..."
 sleep 5
 
 UPDATED_DISKS=$(kubectl get nodes.longhorn.io -n longhorn-system "$NODE_NAME" -o jsonpath='{.spec.disks}' 2>/dev/null)
@@ -166,8 +220,8 @@ else
 fi
 echo ""
 
-# 12. 检查磁盘状态
-echo "12. 检查磁盘状态..."
+# 13. 检查磁盘状态
+echo "13. 检查磁盘状态..."
 echo "等待磁盘就绪（可能需要几分钟）..."
 for i in {1..60}; do
     DISK_STATUS=$(kubectl get nodes.longhorn.io -n longhorn-system "$NODE_NAME" -o jsonpath='{.status.diskStatus}' 2>/dev/null)
@@ -197,12 +251,12 @@ for i in {1..60}; do
 done
 echo ""
 
-# 13. 查看最终状态
-echo "13. 查看最终磁盘状态..."
+# 14. 查看最终状态
+echo "14. 查看最终磁盘状态..."
 kubectl get nodes.longhorn.io -n longhorn-system "$NODE_NAME" -o yaml | grep -A 30 "diskStatus:" | head -40
 echo ""
 
-# 14. 总结
+# 15. 总结
 echo "=== 修复完成 ==="
 echo ""
 echo "磁盘配置:"
