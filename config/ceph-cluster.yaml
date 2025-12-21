@@ -1,0 +1,100 @@
+# Ceph Cluster 配置
+# 用于 k3s 单节点开发/测试环境
+
+apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: rook-ceph
+  namespace: rook-ceph
+spec:
+  # Ceph 版本
+  cephVersion:
+    image: quay.io/ceph/ceph:v18.2.0
+    allowUnsupported: false
+  
+  # 数据目录（主机路径）
+  dataDirHostPath: /var/lib/rook
+  
+  # 是否跳过升级检查
+  skipUpgradeChecks: false
+  
+  # 是否继续升级
+  continueUpgradeAfterChecksEvenIfNotHealthy: false
+  
+  # Monitors 配置
+  mon:
+    count: 1  # 单节点环境使用 1 个 monitor
+    allowMultiplePerNode: false
+    volumeClaimTemplate: {}
+  
+  # Ceph Dashboard（可选）
+  dashboard:
+    enabled: true
+    ssl: false
+  
+  # 网络配置
+  network:
+    provider: host
+    selectors: null
+  
+  # 存储配置
+  storage:
+    useAllNodes: true
+    useAllDevices: false  # 不使用所有设备，使用目录
+    
+    # 目录存储配置（适用于开发/测试）
+    directories:
+    - path: /var/lib/rook/ceph-data
+    
+    # 设备存储配置（生产环境使用）
+    # useAllDevices: true
+    # config:
+    #   databaseSizeMB: "2048"
+    #   journalSizeMB: "2048"
+  
+  # 存储池配置
+  storageClassDeviceSets:
+  - name: set1
+    count: 1
+    resources: {}
+    placement: {}
+    portable: false
+    volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        resources:
+          requests:
+            storage: 10Gi
+        # storageClassName: local-path  # 如果需要，可以指定底层存储类
+        volumeMode: Block
+        accessModes:
+        - ReadWriteOnce
+  
+  # 优先级类
+  priorityClassNames:
+    mon: system-cluster-critical
+    osd: system-node-critical
+    mgr: system-cluster-critical
+  
+  # 资源限制
+  resources:
+    # mgr:
+    #   limits:
+    #     cpu: "500m"
+    #     memory: "512Mi"
+    #   requests:
+    #     cpu: "100m"
+    #     memory: "256Mi"
+  
+  # 健康检查
+  healthCheck:
+    daemonHealth:
+      mon:
+        interval: 45s
+        timeout: 600s
+      osd:
+        interval: 60s
+      status:
+        interval: 60s
+
