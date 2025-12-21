@@ -70,7 +70,53 @@ if [ -n "$PARTITIONS" ]; then
         echo "已取消"
         exit 0
     fi
-    sudo wipefs -a "$DISK_DEVICE" || true
+    
+    # 先卸载所有分区
+    echo "卸载所有分区..."
+    for part in $PARTITIONS; do
+        PART_DEVICE="/dev/$part"
+        if [ -b "$PART_DEVICE" ]; then
+            # 检查是否挂载
+            MOUNT_POINT=$(findmnt -n -o TARGET "$PART_DEVICE" 2>/dev/null || true)
+            if [ -n "$MOUNT_POINT" ]; then
+                echo "  卸载 $PART_DEVICE (挂载在 $MOUNT_POINT)..."
+                sudo umount "$MOUNT_POINT" 2>/dev/null || sudo umount "$PART_DEVICE" 2>/dev/null || true
+            fi
+            
+            # 检查是否是 swap
+            if swapon --show 2>/dev/null | grep -q "$PART_DEVICE"; then
+                echo "  关闭 swap: $PART_DEVICE..."
+                sudo swapoff "$PART_DEVICE" 2>/dev/null || true
+            fi
+        fi
+    done
+    
+    # 等待一下，确保卸载完成
+    sleep 2
+    
+    # 尝试删除分区表
+    echo "删除分区表..."
+    # 先尝试使用 wipefs
+    sudo wipefs -a "$DISK_DEVICE" 2>/dev/null || true
+    
+    # 如果 wipefs 失败，尝试使用 parted
+    if [ $? -ne 0 ]; then
+        echo "  wipefs 失败，尝试使用 parted..."
+        # 删除所有分区
+        for part in $PARTITIONS; do
+            PART_NUM=$(echo $part | sed 's/.*\([0-9]\)/\1/')
+            if [ -n "$PART_NUM" ]; then
+                sudo parted -s "$DISK_DEVICE" rm "$PART_NUM" 2>/dev/null || true
+            fi
+        done
+        # 重新创建分区表
+        sudo parted -s "$DISK_DEVICE" mklabel gpt 2>/dev/null || true
+    fi
+    
+    # 再次尝试 wipefs
+    sudo wipefs -a "$DISK_DEVICE" 2>/dev/null || {
+        echo "⚠️  无法完全清理分区表，但可以继续创建新分区"
+    }
 fi
 
 # 创建分区
