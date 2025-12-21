@@ -15,6 +15,7 @@
 
 ### 🟠 安装过程问题
 4. [longhorn-manager CrashLoopBackOff](#问题4-longhorn-manager-crashloopbackoff)
+   - [DNS 解析失败（k3s 特定问题）](#问题4a-dns-解析失败-k3s-特定问题) ⭐
 5. [longhorn-driver-deployer 卡在 Init:0/1](#问题5-longhorn-driver-deployer-卡在-init01)
 6. [CSI Driver 未安装](#问题6-csi-driver-未安装)
 
@@ -420,6 +421,167 @@ kubectl get pods -n longhorn-system -l app=longhorn-manager
 **参考文档**: 
 - [FIX_LONGHORN_ISSUES.md](FIX_LONGHORN_ISSUES.md#问题-1-longhorn-manager-crashloopbackoff)
 - [FIX_DRIVER_DEPLOYER_INIT.md](FIX_DRIVER_DEPLOYER_INIT.md)
+
+---
+
+### 问题 4a: DNS 解析失败（k3s 特定问题）⭐
+
+**问题描述**:
+```
+longhorn-manager Pod 一直重启，日志显示无法访问 longhorn-backend Service
+错误信息: DNS resolution failed 或 unable to resolve longhorn-backend
+```
+
+**原因分析**:
+- **k3s 环境的 DNS 配置问题**（最常见）
+- `/etc/resolv.conf` 指向 systemd-resolved stub (`127.0.0.53`)
+- k3s 需要配置 `K3S_RESOLV_CONF` 环境变量指向正确的 resolv.conf
+- 参考: [Longhorn 官方文档](https://longhorn.io/kb/troubleshooting-dns-resolution-failed/)
+
+**诊断步骤**:
+
+```bash
+# 1. 检查 longhorn-manager 日志
+kubectl logs -n longhorn-system -l app=longhorn-manager --tail=50 | grep -i "dns\|resolve\|backend"
+
+# 2. 检查当前 resolv.conf 配置
+cat /etc/resolv.conf
+ls -la /etc/resolv.conf
+
+# 3. 检查是否是 systemd-resolved stub
+if [ -L /etc/resolv.conf ]; then
+    readlink -f /etc/resolv.conf
+fi
+
+# 4. 测试 DNS 解析（在 Pod 内）
+MANAGER_POD=$(kubectl get pods -n longhorn-system -l app=longhorn-manager -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it -n longhorn-system $MANAGER_POD -- nslookup longhorn-backend.longhorn-system.svc 2>&1
+```
+
+**解决方案**:
+
+#### 方法 1: 使用修复脚本（推荐）
+
+```bash
+# 运行修复脚本
+sudo ./scripts/fix-k3s-dns-for-longhorn.sh
+```
+
+脚本会自动：
+1. 检测 `/etc/resolv.conf` 配置
+2. 找到正确的 resolv.conf 路径（处理 systemd-resolved）
+3. 更新 k3s.service 添加 `K3S_RESOLV_CONF` 环境变量
+4. 重启 k3s 服务
+
+#### 方法 2: 手动修复
+
+**步骤 1: 确定正确的 resolv.conf 路径**
+
+```bash
+# 如果 /etc/resolv.conf 指向 systemd-resolved stub
+if [ -L /etc/resolv.conf ] && readlink -f /etc/resolv.conf | grep -q "stub-resolv.conf"; then
+    # 使用 systemd-resolved 的真实 resolv.conf
+    RESOLV_CONF="/run/systemd/resolve/resolv.conf"
+    # 验证文件存在
+    if [ ! -f "$RESOLV_CONF" ]; then
+        echo "错误: $RESOLV_CONF 不存在"
+        exit 1
+    fi
+else
+    RESOLV_CONF="/etc/resolv.conf"
+fi
+
+echo "使用 resolv.conf: $RESOLV_CONF"
+```
+
+**步骤 2: 修改 k3s.service**
+
+```bash
+# 找到 k3s 服务文件
+K3S_SERVICE="/etc/systemd/system/k3s.service"
+# 或
+K3S_SERVICE="/usr/local/lib/systemd/system/k3s.service"
+
+# 备份
+sudo cp "$K3S_SERVICE" "${K3S_SERVICE}.backup.$(date +%Y%m%d_%H%M%S)"
+
+# 添加环境变量（在 [Service] 部分）
+sudo sed -i "/\[Service\]/a Environment=\"K3S_RESOLV_CONF=$RESOLV_CONF\"" "$K3S_SERVICE"
+
+# 或如果已存在，更新它
+sudo sed -i "s|K3S_RESOLV_CONF=.*|K3S_RESOLV_CONF=$RESOLV_CONF|g" "$K3S_SERVICE"
+```
+
+**步骤 3: 重新加载并重启 k3s**
+
+```bash
+# 重新加载 systemd
+sudo systemctl daemon-reload
+
+# 重启 k3s
+sudo systemctl restart k3s
+
+# 等待 k3s 启动
+sleep 5
+
+# 验证 k3s 状态
+sudo systemctl status k3s
+```
+
+**步骤 4: 验证修复**
+
+```bash
+# 检查 k3s 配置
+sudo systemctl show k3s | grep RESOLV_CONF
+
+# 检查 Kubernetes 集群连接
+kubectl cluster-info
+
+# 测试 DNS 解析（如果 longhorn-manager 已经运行）
+if kubectl get pods -n longhorn-system -l app=longhorn-manager &>/dev/null; then
+    MANAGER_POD=$(kubectl get pods -n longhorn-system -l app=longhorn-manager -o jsonpath='{.items[0].metadata.name}')
+    kubectl exec -it -n longhorn-system $MANAGER_POD -- nslookup longhorn-backend.longhorn-system.svc
+fi
+```
+
+**验证步骤**:
+
+```bash
+# 1. 检查 longhorn-manager 是否正常启动
+kubectl get pods -n longhorn-system -l app=longhorn-manager
+# 应该看到 Running 状态
+
+# 2. 检查日志（应该没有 DNS 错误）
+kubectl logs -n longhorn-system -l app=longhorn-manager --tail=20
+
+# 3. 检查 longhorn-backend Service
+kubectl get svc -n longhorn-system longhorn-backend
+kubectl get endpoints -n longhorn-system longhorn-backend
+```
+
+**常见问题**:
+
+**Q: `/run/systemd/resolve/resolv.conf` 不存在？**
+```bash
+# 确保 systemd-resolved 运行
+sudo systemctl status systemd-resolved
+
+# 如果没有，可以创建符号链接
+sudo mkdir -p /run/systemd/resolve
+sudo ln -sf /etc/resolv.conf /run/systemd/resolve/resolv.conf
+```
+
+**Q: 修改后 k3s 无法启动？**
+```bash
+# 恢复备份
+sudo cp "${K3S_SERVICE}.backup.*" "$K3S_SERVICE"
+sudo systemctl daemon-reload
+sudo systemctl restart k3s
+```
+
+**参考文档**: 
+- [Longhorn 官方文档 - DNS 解析失败](https://longhorn.io/kb/troubleshooting-dns-resolution-failed/)
+- 修复脚本: `./scripts/fix-k3s-dns-for-longhorn.sh`
 
 ---
 
