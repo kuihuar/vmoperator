@@ -35,18 +35,34 @@ echo ""
 echo_info "1. 清理旧的 Multus 安装"
 echo ""
 
-kubectl delete daemonset -n kube-system kube-multus-ds --ignore-not-found=true
-kubectl delete pod -n kube-system -l app=multus --ignore-not-found=true --force --grace-period=0
-
-# 卸载旧的 Helm 安装
-if helm list -n kube-system | grep -q multus; then
-    RELEASE_NAME=$(helm list -n kube-system | grep multus | awk '{print $1}')
-    echo_info "  卸载旧的 Helm Release: $RELEASE_NAME"
-    helm uninstall $RELEASE_NAME -n kube-system --ignore-not-found=true
+# 检查是否有清理脚本
+if [ -f "scripts/clean-multus-for-helm.sh" ]; then
+    echo_info "  使用清理脚本彻底清理..."
+    ./scripts/clean-multus-for-helm.sh
+else
+    echo_info "  手动清理资源..."
+    
+    # 卸载旧的 Helm 安装
+    if helm list -n kube-system | grep -q multus; then
+        RELEASE_NAME=$(helm list -n kube-system | grep multus | awk '{print $1}')
+        echo_info "  卸载旧的 Helm Release: $RELEASE_NAME"
+        helm uninstall $RELEASE_NAME -n kube-system --ignore-not-found=true
+    fi
+    
+    # 删除所有相关资源
+    kubectl delete daemonset -n kube-system kube-multus-ds --ignore-not-found=true
+    kubectl delete pod -n kube-system -l app=multus --ignore-not-found=true --force --grace-period=0
+    kubectl delete serviceaccount -n kube-system multus --ignore-not-found=true
+    kubectl delete serviceaccount -n kube-system kube-multus-ds --ignore-not-found=true
+    kubectl delete clusterrolebinding multus --ignore-not-found=true
+    kubectl delete clusterrolebinding kube-multus-ds --ignore-not-found=true
+    kubectl delete clusterrole multus --ignore-not-found=true
+    kubectl delete clusterrole kube-multus-ds --ignore-not-found=true
+    kubectl delete configmap -n kube-system multus-config --ignore-not-found=true
+    
+    sleep 5
+    echo_info "  ✓ 清理完成"
 fi
-
-sleep 5
-echo_info "  ✓ 清理完成"
 
 # 2. 添加 Helm Repo
 echo ""
