@@ -310,14 +310,59 @@ echo "节点名称: $NODE_NAME"
 
 # 等待 Node 资源
 echo "等待 Longhorn Node 资源创建..."
-for i in {1..60}; do
-    if kubectl get nodes.longhorn.io -n longhorn-system "$NODE_NAME" &>/dev/null; then
-        echo "✓ Node 资源已创建"
-        break
+echo "（这可能需要几分钟，Manager 需要发现节点）"
+echo ""
+
+# 使用专门的等待脚本
+if [ -f "./scripts/wait-for-longhorn-node.sh" ]; then
+    ./scripts/wait-for-longhorn-node.sh "$NODE_NAME" 300
+else
+    # 备用等待逻辑
+    ELAPSED=0
+    MAX_WAIT=300
+    while [ $ELAPSED -lt $MAX_WAIT ]; do
+        if kubectl get nodes.longhorn.io -n longhorn-system "$NODE_NAME" &>/dev/null; then
+            echo "✓ Node 资源已创建"
+            break
+        fi
+        echo "  等待中... ($ELAPSED/$MAX_WAIT 秒)"
+        sleep 5
+        ELAPSED=$((ELAPSED + 5))
+    done
+    
+    if [ $ELAPSED -ge $MAX_WAIT ]; then
+        echo "⚠️  等待超时，Node 资源仍未创建"
+        echo "继续尝试配置（可能会失败）..."
     fi
-    echo "  等待中... ($i/60)"
-    sleep 2
-done
+fi
+
+# 再次检查
+if ! kubectl get nodes.longhorn.io -n longhorn-system "$NODE_NAME" &>/dev/null; then
+    echo ""
+    echo "❌ Node 资源仍未创建"
+    echo ""
+    echo "诊断:"
+    echo "  1. 检查 Manager 状态:"
+    echo "     kubectl get pods -n longhorn-system -l app=longhorn-manager"
+    echo ""
+    echo "  2. 检查 Manager 日志:"
+    echo "     kubectl logs -n longhorn-system -l app=longhorn-manager --tail=50"
+    echo ""
+    echo "  3. 手动等待后重试:"
+    echo "     ./scripts/wait-for-longhorn-node.sh $NODE_NAME"
+    echo ""
+    echo "  4. 或跳过磁盘配置，稍后手动配置"
+    read -p "是否继续（跳过磁盘配置）? (y/N): " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "已取消"
+        exit 1
+    fi
+    echo "跳过磁盘配置，稍后可以手动配置"
+    echo ""
+    exit 0
+fi
+echo ""
 
 DISK_NAME="data-disk"
 if [ "$DISK_PATH" = "/var/lib/longhorn" ]; then
