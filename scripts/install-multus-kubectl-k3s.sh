@@ -89,17 +89,47 @@ cp "$TEMP_YAML" "$TEMP_YAML.orig"
 # 注意：需要精确匹配，避免误替换
 echo_info "  更新挂载路径..."
 
-# 转义路径中的特殊字符用于 sed
-CNI_CONF_DIR_ESC=$(echo "$CNI_CONF_DIR" | sed 's/[\/&]/\\&/g')
-CNI_BIN_DIR_ESC=$(echo "$CNI_BIN_DIR" | sed 's/[\/&]/\\&/g')
+# 使用 awk 进行精确的路径替换
+# 只替换 hostPath 下的 path 值，保持 YAML 结构
+echo_info "  使用 awk 进行路径替换..."
 
-# 修改 volumes 中的 path（只修改 hostPath.path，不修改 mountPath）
-# 查找 pattern: path: /etc/cni/net.d 或 path: /opt/cni/bin（在 volumes 部分的 hostPath 下）
-sed -i.tmp "s|^\s*path:\s*/etc/cni/net.d|          path: $CNI_CONF_DIR_ESC|g" "$TEMP_YAML"
-sed -i.tmp "s|^\s*path:\s*/opt/cni/bin|          path: $CNI_BIN_DIR_ESC|g" "$TEMP_YAML"
+awk -v cni_conf="$CNI_CONF_DIR" -v cni_bin="$CNI_BIN_DIR" '
+BEGIN { 
+    in_hostpath=0 
+}
+/hostPath:/ { 
+    in_hostpath=1 
+    print
+    next
+}
+/^[[:space:]]+path:[[:space:]]+\/etc\/cni\/net\.d/ && in_hostpath {
+    gsub(/\/etc\/cni\/net\.d/, cni_conf)
+    in_hostpath=0
+    print
+    next
+}
+/^[[:space:]]+path:[[:space:]]+\/opt\/cni\/bin/ && in_hostpath {
+    gsub(/\/opt\/cni\/bin/, cni_bin)
+    in_hostpath=0
+    print
+    next
+}
+/^[[:space:]]*-[[:space:]]+name:/ { 
+    in_hostpath=0 
+}
+{ 
+    print 
+}
+' "$TEMP_YAML" > "$TEMP_YAML.new" && mv "$TEMP_YAML.new" "$TEMP_YAML"
 
-# 清理临时文件
-rm -f "$TEMP_YAML.tmp"
+# 验证替换是否成功
+if grep -q "path: $CNI_CONF_DIR" "$TEMP_YAML" && grep -q "path: $CNI_BIN_DIR" "$TEMP_YAML"; then
+    echo_info "  ✓ 路径替换成功"
+else
+    echo_error "  ✗ 路径替换失败，请手动检查 YAML 文件"
+    echo_info "  备份文件: $TEMP_YAML.orig"
+    exit 1
+fi
 
 echo_info "  ✓ 路径已更新"
 echo_info "  修改详情:"
