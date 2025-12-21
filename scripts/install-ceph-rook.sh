@@ -54,9 +54,30 @@ echo ""
 kubectl create namespace rook-ceph --dry-run=client -o yaml | kubectl apply -f -
 echo_info "  ✓ 命名空间已创建"
 
-# 3. 安装 Rook Operator
+# 3. 检查是否已安装
 echo ""
-echo_info "3. 安装 Rook Operator"
+echo_info "3. 检查是否已安装"
+echo ""
+
+if [ "$USE_HELM" = true ]; then
+    EXISTING_RELEASE=$(helm list -n rook-ceph 2>/dev/null | grep rook-ceph | awk '{print $1}' || echo "")
+    if [ -n "$EXISTING_RELEASE" ]; then
+        echo_warn "  ⚠️  发现已存在的 Helm Release: $EXISTING_RELEASE"
+        read -p "是否卸载后重新安装？(y/n) " REINSTALL
+        if [[ $REINSTALL =~ ^[Yy]$ ]]; then
+            echo_info "  卸载现有安装..."
+            helm uninstall $EXISTING_RELEASE -n rook-ceph --ignore-not-found=true
+            sleep 5
+        else
+            echo_warn "  已取消，请先手动卸载: helm uninstall $EXISTING_RELEASE -n rook-ceph"
+            exit 0
+        fi
+    fi
+fi
+
+# 4. 安装 Rook Operator
+echo ""
+echo_info "4. 安装 Rook Operator"
 echo ""
 
 if [ "$USE_HELM" = true ]; then
@@ -110,7 +131,19 @@ kubectl wait --for=condition=ready pod -l app=rook-ceph-operator -n rook-ceph --
 
 echo_info "  ✓ Operator 已就绪"
 
-# 5. 创建 Ceph Cluster
+# 5. 等待 Operator 就绪
+echo ""
+echo_info "5. 等待 Rook Operator 就绪"
+echo ""
+
+kubectl wait --for=condition=ready pod -l app=rook-ceph-operator -n rook-ceph --timeout=600s || {
+    echo_warn "  ⚠️  Operator 启动超时，检查状态..."
+    kubectl get pods -n rook-ceph
+}
+
+echo_info "  ✓ Operator 已就绪"
+
+# 6. 创建 Ceph Cluster
 echo ""
 echo_info "5. 创建 Ceph Cluster"
 echo ""
@@ -174,9 +207,9 @@ spec:
 EOF
 fi
 
-# 6. 等待 Ceph Cluster 就绪
+# 7. 等待 Ceph Cluster 就绪
 echo ""
-echo_info "6. 等待 Ceph Cluster 就绪"
+echo_info "7. 等待 Ceph Cluster 就绪"
 echo ""
 
 echo_info "  这可能需要几分钟..."
@@ -189,9 +222,9 @@ for i in {1..60}; do
     sleep 10
 done
 
-# 7. 安装 Ceph CSI Driver
+# 8. 安装 Ceph CSI Driver
 echo ""
-echo_info "7. 安装 Ceph CSI Driver"
+echo_info "8. 安装 Ceph CSI Driver"
 echo ""
 
 # Rook Operator 会自动安装 CSI Driver，但我们需要验证
@@ -199,9 +232,9 @@ kubectl wait --for=condition=ready pod -l app=csi-rbdplugin -n rook-ceph --timeo
     echo_warn "  CSI Driver 可能还在启动中..."
 }
 
-# 8. 创建 StorageClass
+# 9. 创建 StorageClass
 echo ""
-echo_info "8. 创建 StorageClass"
+echo_info "9. 创建 StorageClass"
 echo ""
 
 cat <<EOF | kubectl apply -f -
@@ -228,9 +261,9 @@ if [[ $SET_DEFAULT =~ ^[Yy]$ ]]; then
     echo_info "  ✓ 已设置为默认 StorageClass"
 fi
 
-# 9. 验证安装
+# 10. 验证安装
 echo ""
-echo_info "9. 验证安装"
+echo_info "10. 验证安装"
 echo ""
 
 sleep 10
