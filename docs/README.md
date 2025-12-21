@@ -46,6 +46,29 @@
   - 参数选择建议
   - 实际使用示例
 
+### Longhorn 存储文档
+
+- **[k3s 安装 Longhorn 常见问题汇总](K3S_LONGHORN_ISSUES.md)** ⚠️ **强烈推荐阅读**
+  - 14 个常见问题及解决方案
+  - 安装前、安装中、安装后、运行时问题
+  - 快速诊断和修复流程
+  - 最佳实践建议
+
+- **[Longhorn 安装指南](LONGHORN_INSTALLATION_GUIDE.md)** 📦 完整安装指南
+  - 前置要求
+  - kubectl 和 Helm 两种安装方法
+  - 验证和故障排查
+
+- **[Longhorn 重新安装指南](LONGHORN_REINSTALL_GUIDE.md)** 🔄 卸载和重新安装
+  - 完整卸载流程
+  - 重新安装步骤
+  - 版本选择建议
+
+- **[Longhorn 故障排查指南](FIX_LONGHORN_ISSUES.md)** 🔍 故障排查
+  - Manager CrashLoopBackOff
+  - driver-deployer 初始化问题
+  - 磁盘配置问题
+
 ## 🚀 快速链接
 
 ### 按角色查找
@@ -59,7 +82,8 @@
 **运维人员**
 1. 阅读 [快速开始指南](QUICKSTART.md) 了解安装步骤
 2. 阅读 [开发文档 - 部署指南](DEVELOPMENT.md#部署指南) 了解部署流程
-3. 阅读 [开发文档 - 故障排查](DEVELOPMENT.md#故障排查) 了解问题处理
+3. 阅读 [k3s 安装 Longhorn 常见问题汇总](K3S_LONGHORN_ISSUES.md) 了解 Longhorn 问题处理
+4. 阅读 [开发文档 - 故障排查](DEVELOPMENT.md#故障排查) 了解问题处理
 
 **架构师**
 1. 阅读 [架构设计](ARCHITECTURE.md) 了解整体架构
@@ -92,6 +116,7 @@ docs/
 - **环境搭建**: 查看 [快速开始指南](QUICKSTART.md)
 - **开发流程**: 查看 [开发文档](DEVELOPMENT.md)
 - **系统设计**: 查看 [架构设计](ARCHITECTURE.md)
+- **Longhorn 问题**: 查看 [k3s 安装 Longhorn 常见问题汇总](K3S_LONGHORN_ISSUES.md) ⭐
 - **问题排查**: 查看 [开发文档 - 故障排查](DEVELOPMENT.md#故障排查)
 
 ### 文档有更新吗？

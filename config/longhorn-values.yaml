@@ -1,0 +1,57 @@
+# Longhorn Helm Chart Values
+# 用于单节点 k3s 环境的推荐配置
+
+# 默认设置
+defaultSettings:
+  # 单节点环境：设置副本数为 1
+  defaultReplicaCount: "1"
+  
+  # 默认数据路径（可选，默认是 /var/lib/longhorn）
+  # defaultDataPath: "/mnt/longhorn"
+
+# 持久化存储配置
+persistence:
+  defaultClass: true
+  defaultClassReplicaCount: 1
+
+# 资源限制（根据实际情况调整）
+resources:
+  manager:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+    limits:
+      cpu: 500m
+      memory: 500Mi
+  ui:
+    requests:
+      cpu: 50m
+      memory: 50Mi
+    limits:
+      cpu: 200m
+      memory: 200Mi
+  instanceManager:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  engineImage:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      cpu: 200m
+      memory: 200Mi
+
+# 镜像配置（可选，如果需要使用特定镜像）
+# images:
+#   longhorn:
+#     manager: longhornio/longhorn-manager:v1.10.1
+#     engine: longhornio/longhorn-engine:v1.10.1
+#     ui: longhornio/longhorn-ui:v1.10.1
+#     instanceManager: longhornio/longhorn-instance-manager:v1.10.1
+#     shareManager: longhornio/longhorn-share-manager:v1.10.1
+#     backingImageManager: longhornio/backing-image-manager:v1.10.1
+
