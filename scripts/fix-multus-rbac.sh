@@ -53,7 +53,7 @@ rules:
       - '*'
     verbs:
       - '*'
-  # Pod 权限（需要 get, list, update）
+  # Pod 权限（根据官方文档：只需要 get 和 update）
   - apiGroups:
       - ""
     resources:
@@ -61,18 +61,7 @@ rules:
       - pods/status
     verbs:
       - get
-      - list
-      - watch
       - update
-  # 节点权限（可能需要）
-  - apiGroups:
-      - ""
-    resources:
-      - nodes
-    verbs:
-      - get
-      - list
-      - watch
 ---
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
