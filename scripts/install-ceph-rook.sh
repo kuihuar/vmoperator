@@ -80,72 +80,74 @@ echo ""
 echo_info "4. 安装 Rook Operator"
 echo ""
 
+HELM_INSTALLED=false
 if [ "$USE_HELM" = true ]; then
-    echo_info "  使用 Helm 安装..."
+    echo_info "  尝试使用 Helm 安装..."
     
-    helm install rook-ceph rook-release/rook-ceph \
+    if helm install rook-ceph rook-release/rook-ceph \
         --namespace rook-ceph \
         --set operatorNamespace=rook-ceph \
         --wait \
-        --timeout 10m
-    
-    if [ $? -eq 0 ]; then
-        echo_info "  ✓ Rook Operator 已安装"
+        --timeout 10m 2>&1; then
+        echo_info "  ✓ Rook Operator 已通过 Helm 安装"
+        HELM_INSTALLED=true
     else
-        echo_error "  ✗ Rook Operator 安装失败"
-        exit 1
+        echo_warn "  ⚠️  Helm 安装失败，fallback 到 kubectl apply"
+        HELM_INSTALLED=false
     fi
-else
+fi
+
+if [ "$HELM_INSTALLED" = false ]; then
     echo_info "  使用 kubectl apply 安装..."
     
     # 下载并应用 Rook Operator manifests
     ROOK_VERSION="v1.13.0"
     
     echo_info "  下载 CRDs..."
-    kubectl apply -f https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/crds.yaml
+    if ! kubectl apply -f https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/crds.yaml 2>&1; then
+        echo_error "  ✗ CRDs 下载失败，请检查网络连接"
+        exit 1
+    fi
     
     echo_info "  下载 Common manifests..."
-    kubectl apply -f https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/common.yaml
+    if ! kubectl apply -f https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/common.yaml 2>&1; then
+        echo_error "  ✗ Common manifests 下载失败"
+        exit 1
+    fi
     
     echo_info "  下载 Operator manifests..."
-    kubectl apply -f https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/operator.yaml
+    if ! kubectl apply -f https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/operator.yaml 2>&1; then
+        echo_error "  ✗ Operator manifests 下载失败"
+        exit 1
+    fi
     
     echo_info "  ✓ Rook Operator manifests 已应用"
-    
-    # 等待 Operator 就绪
-    echo_info "  等待 Operator 就绪..."
-    kubectl wait --for=condition=ready pod -l app=rook-ceph-operator -n rook-ceph --timeout=300s || {
-        echo_warn "  Operator 可能还在启动中，继续..."
-    }
 fi
-
-# 4. 等待 Operator 就绪
-echo ""
-echo_info "4. 等待 Rook Operator 就绪"
-echo ""
-
-kubectl wait --for=condition=ready pod -l app=rook-ceph-operator -n rook-ceph --timeout=600s || {
-    echo_warn "  ⚠️  Operator 启动超时，检查状态..."
-    kubectl get pods -n rook-ceph
-}
-
-echo_info "  ✓ Operator 已就绪"
 
 # 5. 等待 Operator 就绪
 echo ""
 echo_info "5. 等待 Rook Operator 就绪"
 echo ""
 
+echo_info "  等待 Operator Pod 启动..."
 kubectl wait --for=condition=ready pod -l app=rook-ceph-operator -n rook-ceph --timeout=600s || {
     echo_warn "  ⚠️  Operator 启动超时，检查状态..."
     kubectl get pods -n rook-ceph
+    echo_warn "  继续等待，Operator 可能需要更多时间..."
 }
 
-echo_info "  ✓ Operator 已就绪"
+# 再次检查 Operator 是否就绪
+sleep 10
+if kubectl get pods -n rook-ceph -l app=rook-ceph-operator 2>/dev/null | grep -q Running; then
+    echo_info "  ✓ Operator 已就绪"
+else
+    echo_warn "  ⚠️  Operator 可能还在启动中，继续安装流程..."
+    kubectl get pods -n rook-ceph -l app=rook-ceph-operator
+fi
 
 # 6. 创建 Ceph Cluster
 echo ""
-echo_info "5. 创建 Ceph Cluster"
+echo_info "6. 创建 Ceph Cluster"
 echo ""
 
 echo_warn "  需要先准备存储设备或使用目录"
@@ -209,7 +211,7 @@ fi
 
 # 7. 等待 Ceph Cluster 就绪
 echo ""
-echo_info "7. 等待 Ceph Cluster 就绪"
+echo_info "7. 等待 Ceph Cluster 就绪（这可能需要几分钟）"
 echo ""
 
 echo_info "  这可能需要几分钟..."

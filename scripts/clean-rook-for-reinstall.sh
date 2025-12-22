@@ -79,30 +79,26 @@ echo ""
 
 sleep 10
 
-# 7. 删除命名空间（可选）
+# 7. 删除命名空间（自动删除，不保留）
 echo ""
-read -p "是否删除 rook-ceph 命名空间？(y/n) " DELETE_NS
-if [[ $DELETE_NS =~ ^[Yy]$ ]]; then
-    echo_info "  删除命名空间..."
-    kubectl delete namespace rook-ceph --ignore-not-found=true --wait=true --timeout=2m 2>/dev/null || {
-        echo_warn "  命名空间删除可能需要更多时间，强制删除..."
-        kubectl delete namespace rook-ceph --ignore-not-found=true --grace-period=0 --force
-    }
-    echo_info "  ✓ 命名空间已删除"
-else
-    echo_info "  保留命名空间"
-fi
+echo_info "7. 删除命名空间"
+echo ""
 
-# 8. 清理 CRDs（可选）
+echo_info "  删除 rook-ceph 命名空间..."
+kubectl delete namespace rook-ceph --ignore-not-found=true --wait=true --timeout=2m 2>/dev/null || {
+    echo_warn "  命名空间删除可能需要更多时间，强制删除..."
+    kubectl delete namespace rook-ceph --ignore-not-found=true --grace-period=0 --force 2>/dev/null || true
+}
+echo_info "  ✓ 命名空间已删除"
+
+# 8. 清理 CRDs（可选，默认保留以便重新安装）
 echo ""
-read -p "是否删除 Rook CRDs？(y/n) " DELETE_CRDS
-if [[ $DELETE_CRDS =~ ^[Yy]$ ]]; then
-    echo_info "  删除 Rook CRDs..."
-    kubectl get crd | grep rook | awk '{print $1}' | xargs kubectl delete crd --ignore-not-found=true
-    echo_info "  ✓ CRDs 已删除"
-else
-    echo_info "  保留 CRDs（建议保留以便重新安装）"
-fi
+echo_info "8. 清理 CRDs（可选）"
+echo ""
+
+echo_info "  保留 CRDs（建议保留以便重新安装）"
+echo_warn "  如需完全清理 CRDs，请手动执行："
+echo "    kubectl get crd | grep rook | awk '{print \$1}' | xargs kubectl delete crd"
 
 # 9. 清理节点数据（可选）
 echo ""
