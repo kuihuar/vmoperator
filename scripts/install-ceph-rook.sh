@@ -174,16 +174,32 @@ echo ""
 echo_warn "  需要先准备存储设备或使用目录"
 echo_info "  选择部署方式："
 echo "    1. 使用所有可用设备（生产环境）"
-echo "    2. 使用目录存储（开发/测试环境，单节点）"
+echo "    2. 使用指定设备（如 /dev/sdb）"
+echo "    3. 使用目录存储（开发/测试环境，单节点）"
 echo ""
 
-read -p "选择部署方式 (1/2，默认2): " DEPLOY_TYPE
-DEPLOY_TYPE=${DEPLOY_TYPE:-2}
+read -p "选择部署方式 (1/2/3，默认3): " DEPLOY_TYPE
+DEPLOY_TYPE=${DEPLOY_TYPE:-3}
+
+# 获取节点名称
+NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
 
 if [ "$DEPLOY_TYPE" = "2" ]; then
-    echo_info "  创建基于目录的 Ceph Cluster（适用于开发/测试）"
+    # 使用指定设备
+    echo_info "  创建基于指定设备的 Ceph Cluster"
+    echo ""
+    read -p "请输入设备路径（如 /dev/sdb）: " DEVICE_PATH
+    DEVICE_PATH=${DEVICE_PATH:-/dev/sdb}
     
-    # 创建目录存储的 Ceph Cluster
+    # 检查设备是否存在
+    if [ ! -b "$DEVICE_PATH" ]; then
+        echo_warn "  ⚠️  设备 $DEVICE_PATH 不存在，但将继续创建配置"
+        echo_warn "     请确保设备存在且未被格式化"
+    else
+        echo_info "  ✓ 设备 $DEVICE_PATH 存在"
+    fi
+    
+    # 创建基于指定设备的 Ceph Cluster
     cat <<EOF | kubectl apply -f -
 apiVersion: ceph.rook.io/v1
 kind: CephCluster
@@ -197,20 +213,60 @@ spec:
   mon:
     count: 1
   storage:
-    useAllNodes: true
+    useAllNodes: false
     useAllDevices: false
-    config:
-      databaseSizeMB: "1024"
-      journalSizeMB: "1024"
-    directories:
-    - path: /var/lib/rook/ceph-data
+    nodes:
+    - name: "$NODE_NAME"
+      devices:
+      - name: "$(basename $DEVICE_PATH)"
+      config:
+        databaseSizeMB: "1024"
+        journalSizeMB: "1024"
 EOF
     
-    echo_info "  ✓ Ceph Cluster 配置已创建"
+    echo_info "  ✓ Ceph Cluster 配置已创建（使用设备 $DEVICE_PATH）"
+elif [ "$DEPLOY_TYPE" = "3" ]; then
+    # 使用目录存储
+    echo_info "  创建基于目录的 Ceph Cluster（适用于开发/测试）"
+    
+    # 创建存储目录
+    STORAGE_DIR="/var/lib/rook/ceph-data"
+    if [ ! -d "$STORAGE_DIR" ]; then
+        echo_info "  创建存储目录: $STORAGE_DIR"
+        sudo mkdir -p "$STORAGE_DIR"
+        sudo chmod 755 "$STORAGE_DIR"
+    fi
+    
+    # 创建基于目录的 Ceph Cluster
+    cat <<EOF | kubectl apply -f -
+apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: rook-ceph
+  namespace: rook-ceph
+spec:
+  cephVersion:
+    image: quay.io/ceph/ceph:v18.2.0
+  dataDirHostPath: /var/lib/rook
+  mon:
+    count: 1
+  storage:
+    useAllNodes: false
+    useAllDevices: false
+    nodes:
+    - name: "$NODE_NAME"
+      directories:
+      - path: "$STORAGE_DIR"
+      config:
+        databaseSizeMB: "1024"
+        journalSizeMB: "1024"
+EOF
+    
+    echo_info "  ✓ Ceph Cluster 配置已创建（使用目录 $STORAGE_DIR）"
 else
-    echo_info "  创建基于设备的 Ceph Cluster"
-    echo_warn "  需要手动创建 CephCluster CR，参考: config/ceph-cluster.yaml"
-    echo_info "  或者继续使用默认配置..."
+    # 使用所有可用设备
+    echo_info "  创建基于所有可用设备的 Ceph Cluster"
+    echo_warn "  ⚠️  将使用所有未使用的设备，请确保设备未被格式化"
     
     cat <<EOF | kubectl apply -f -
 apiVersion: ceph.rook.io/v1
@@ -227,7 +283,12 @@ spec:
   storage:
     useAllNodes: true
     useAllDevices: true
+    config:
+      databaseSizeMB: "1024"
+      journalSizeMB: "1024"
 EOF
+    
+    echo_info "  ✓ Ceph Cluster 配置已创建（使用所有可用设备）"
 fi
 
 # 7. 等待 Ceph Cluster 就绪
