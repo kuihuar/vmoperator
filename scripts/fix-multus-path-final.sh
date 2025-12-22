@@ -122,8 +122,13 @@ HOST_KUBECONFIG="$CNI_CONF_DIR/multus.d/multus.kubeconfig"
 if [ -f "$HOST_KUBECONFIG" ]; then
     echo_info "  ✓ kubeconfig 存在: $HOST_KUBECONFIG"
 else
-    echo_error "  ✗ kubeconfig 不存在，创建..."
-    sudo ./scripts/create-kubeconfig-official.sh
+    echo_warn "  ⚠️  kubeconfig 不存在，尝试创建..."
+    if [ -f "scripts/create-kubeconfig-official.sh" ]; then
+        sudo ./scripts/create-kubeconfig-official.sh
+    else
+        echo_error "  ✗ 无法找到创建脚本，请手动创建 kubeconfig"
+        echo_info "  路径: $HOST_KUBECONFIG"
+    fi
 fi
 
 # 4. 重启 Pod
