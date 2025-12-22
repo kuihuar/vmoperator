@@ -26,10 +26,11 @@ echo ""
 KERNEL_VERSION=$(uname -r)
 echo_info "  内核版本: $KERNEL_VERSION"
 
-# 检查模块文件是否存在
+# 检查模块文件是否存在（支持多种压缩格式）
 if [ -f "/lib/modules/$KERNEL_VERSION/kernel/drivers/block/rbd.ko" ] || \
    [ -f "/lib/modules/$KERNEL_VERSION/kernel/drivers/block/rbd.ko.xz" ] || \
-   [ -f "/lib/modules/$KERNEL_VERSION/kernel/drivers/block/rbd.ko.gz" ]; then
+   [ -f "/lib/modules/$KERNEL_VERSION/kernel/drivers/block/rbd.ko.gz" ] || \
+   [ -f "/lib/modules/$KERNEL_VERSION/kernel/drivers/block/rbd.ko.zst" ]; then
     echo_info "  ✓ rbd 模块文件存在"
     
     # 尝试加载
