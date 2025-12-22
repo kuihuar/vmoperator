@@ -7,11 +7,13 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 echo_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 echo_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+echo_detail() { echo -e "${BLUE}[DETAIL]${NC} $1"; }
 
 echo ""
 echo_info "=========================================="
@@ -54,9 +56,32 @@ if [ -n "$DEFAULT_CNI_CONF" ]; then
     
     echo_info "  默认 CNI 名称: $DEFAULT_CNI_NAME"
 else
-    echo_warn "  ⚠️  未找到默认 CNI 配置，尝试常见名称..."
-    # k3s 常见使用 flannel
-    DEFAULT_CNI_NAME="flannel"
+    echo_warn "  ⚠️  未找到默认 CNI 配置文件，列出所有文件:"
+    sudo ls -la "$CNI_CONF_DIR"/*.conf 2>/dev/null || echo "  目录为空或无法访问"
+    echo ""
+    echo_warn "  ⚠️  尝试从 k3s 常见配置推断..."
+    
+    # k3s 常见使用 flannel，但配置可能在其他地方
+    # 检查是否有 flannel 相关配置
+    if sudo ls -1 "$CNI_CONF_DIR"/*.conflist 2>/dev/null | grep -q .; then
+        FLANNEL_CONFLIST=$(sudo ls -1 "$CNI_CONF_DIR"/*.conflist 2>/dev/null | head -1)
+        echo_info "  找到 conflist 文件: $FLANNEL_CONFLIST"
+        DEFAULT_CNI_NAME=$(sudo cat "$FLANNEL_CONFLIST" | jq -r '.plugins[0].name // .name // "flannel"' 2>/dev/null || echo "flannel")
+    else
+        # 最后尝试：检查 k3s 实际使用的 CNI
+        # k3s 默认使用 flannel，但配置名称可能是 10-flannel.conflist 或其他
+        echo_info "  尝试检查 k3s 实际 CNI..."
+        if kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.systemUUID}' &>/dev/null; then
+            # 如果能连接集群，说明 CNI 在工作，可能是 flannel
+            DEFAULT_CNI_NAME="flannel"
+            echo_info "  推断使用: flannel（k3s 默认）"
+        else
+            DEFAULT_CNI_NAME="flannel"
+            echo_warn "  无法确定，使用默认值: flannel"
+        fi
+    fi
+    
+    echo_info "  将使用 CNI 名称: $DEFAULT_CNI_NAME"
 fi
 
 # 3. 修复 Multus 配置
