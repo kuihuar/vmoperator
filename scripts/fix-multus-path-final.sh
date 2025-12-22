@@ -24,13 +24,46 @@ echo_info "1. 检查 DaemonSet 挂载配置"
 echo ""
 
 DS_NAME="kube-multus-ds"
-CNI_MOUNT=$(kubectl get daemonset -n kube-system $DS_NAME -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[?(@.name=="cni")].mountPath}' 2>/dev/null || echo "")
-CNI_HOST=$(kubectl get daemonset -n kube-system $DS_NAME -o jsonpath='{.spec.template.spec.volumes[?(@.name=="cni")].hostPath.path}' 2>/dev/null || echo "")
+
+# 检查 DaemonSet 是否存在
+if ! kubectl get daemonset -n kube-system $DS_NAME &>/dev/null; then
+    echo_error "  ✗ DaemonSet 不存在: $DS_NAME"
+    echo_info "  请先安装 Multus"
+    exit 1
+fi
+
+# 获取挂载配置（尝试多个可能的 volume 名称）
+CNI_MOUNT=""
+CNI_HOST=""
+
+# 尝试常见的 volume 名称
+for VOL_NAME in "cni" "cni-conf-dir" "cniconfig"; do
+    CNI_MOUNT=$(kubectl get daemonset -n kube-system $DS_NAME -o jsonpath="{.spec.template.spec.containers[0].volumeMounts[?(@.name==\"$VOL_NAME\")].mountPath}" 2>/dev/null || echo "")
+    CNI_HOST=$(kubectl get daemonset -n kube-system $DS_NAME -o jsonpath="{.spec.template.spec.volumes[?(@.name==\"$VOL_NAME\")].hostPath.path}" 2>/dev/null || echo "")
+    if [ -n "$CNI_MOUNT" ] && [ -n "$CNI_HOST" ]; then
+        break
+    fi
+done
+
+# 如果还是找不到，尝试列出所有 volumes
+if [ -z "$CNI_MOUNT" ] || [ -z "$CNI_HOST" ]; then
+    echo_warn "  ⚠️  无法通过常见名称找到挂载，尝试列出所有 volumes..."
+    kubectl get daemonset -n kube-system $DS_NAME -o jsonpath='{.spec.template.spec.volumes[*].name}' | tr ' ' '\n' | while read vol_name; do
+        if [ -n "$vol_name" ]; then
+            vol_path=$(kubectl get daemonset -n kube-system $DS_NAME -o jsonpath="{.spec.template.spec.volumes[?(@.name==\"$vol_name\")].hostPath.path}" 2>/dev/null || echo "")
+            if echo "$vol_path" | grep -q "cni\|net.d"; then
+                CNI_HOST="$vol_path"
+                CNI_MOUNT=$(kubectl get daemonset -n kube-system $DS_NAME -o jsonpath="{.spec.template.spec.containers[0].volumeMounts[?(@.name==\"$vol_name\")].mountPath}" 2>/dev/null || echo "")
+                break
+            fi
+        fi
+    done
+fi
 
 if [ -z "$CNI_MOUNT" ] || [ -z "$CNI_HOST" ]; then
     echo_error "  ✗ 无法获取 DaemonSet 挂载配置"
-    echo_info "  检查 DaemonSet 是否存在..."
-    kubectl get daemonset -n kube-system $DS_NAME
+    echo_info "  DaemonSet 配置："
+    kubectl get daemonset -n kube-system $DS_NAME -o yaml | grep -A 10 "volumes:" | head -20
     exit 1
 fi
 
