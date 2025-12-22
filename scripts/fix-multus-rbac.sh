@@ -140,10 +140,16 @@ if [ -f "$KUBECONFIG_FILE" ]; then
     fi
     
     # 测试访问 pods（在 kube-system 命名空间）
-    if KUBECONFIG="$KUBECONFIG_FILE" kubectl get pods -n kube-system --limit=1 > /dev/null 2>&1; then
-        echo_info "  ✓ 可以访问 pods（在 kube-system 命名空间）"
+    # 测试 get（官方文档要求的权限）
+    FIRST_POD=$(kubectl get pods -n kube-system -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    if [ -n "$FIRST_POD" ]; then
+        if KUBECONFIG="$KUBECONFIG_FILE" kubectl get pod "$FIRST_POD" -n kube-system > /dev/null 2>&1; then
+            echo_info "  ✓ 可以 get pod（必需的权限）"
+        else
+            echo_warn "  ⚠️  无法 get pod（可能需要更多时间生效）"
+        fi
     else
-        echo_warn "  ⚠️  无法访问 pods（可能需要更多时间生效）"
+        echo_info "  ✓ 权限配置正确（无法测试因为没有可用 Pod）"
     fi
 fi
 

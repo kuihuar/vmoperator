@@ -15,6 +15,64 @@ echo ""
 echo_info "详细检查 Multus 权限"
 echo ""
 
+# 0. 检查前提条件
+echo_info "0. 检查前提条件"
+echo ""
+
+PREREQUISITES_OK=true
+
+# 检查 ServiceAccount
+if kubectl get sa -n kube-system multus > /dev/null 2>&1; then
+    echo_info "  ✓ ServiceAccount 存在"
+else
+    echo_error "  ✗ ServiceAccount 不存在"
+    echo_error "    前提条件不满足，请先创建 ServiceAccount"
+    PREREQUISITES_OK=false
+fi
+
+# 检查 ClusterRole
+if kubectl get clusterrole multus > /dev/null 2>&1; then
+    echo_info "  ✓ ClusterRole 存在"
+else
+    echo_error "  ✗ ClusterRole 不存在"
+    echo_error "    前提条件不满足，请先创建 ClusterRole"
+    PREREQUISITES_OK=false
+fi
+
+# 检查 ClusterRoleBinding
+if kubectl get clusterrolebinding multus > /dev/null 2>&1; then
+    echo_info "  ✓ ClusterRoleBinding 存在"
+else
+    echo_error "  ✗ ClusterRoleBinding 不存在"
+    echo_error "    前提条件不满足，请先创建 ClusterRoleBinding"
+    PREREQUISITES_OK=false
+fi
+
+# 检查 Secret/token
+SECRETS=$(kubectl get secrets -n=kube-system -o json 2>/dev/null | jq -r '.items[]|select(.metadata.annotations."kubernetes.io/service-account.name"=="multus")| .metadata.name' || echo "")
+if [ -n "$SECRETS" ]; then
+    echo_info "  ✓ ServiceAccount Secret 存在"
+else
+    echo_warn "  ⚠️  ServiceAccount Secret 不存在（可能需要等待创建）"
+fi
+
+# 检查 kubeconfig 文件
+KUBECONFIG_FILE="/var/lib/rancher/k3s/agent/etc/cni/net.d/multus.d/multus.kubeconfig"
+if [ -f "$KUBECONFIG_FILE" ]; then
+    echo_info "  ✓ kubeconfig 文件存在"
+else
+    echo_warn "  ⚠️  kubeconfig 文件不存在: $KUBECONFIG_FILE"
+fi
+
+if [ "$PREREQUISITES_OK" != true ]; then
+    echo ""
+    echo_error "前提条件不满足，部分检查可能无法进行"
+    echo_info "建议先运行: sudo ./scripts/fix-multus-rbac.sh"
+    echo ""
+fi
+
+echo ""
+
 # 1. 检查 ClusterRole
 echo_info "1. 检查 ClusterRole 配置"
 echo ""
@@ -86,17 +144,22 @@ if [ -f "$KUBECONFIG_FILE" ]; then
     
     # 注意：官方文档只要求 get 和 update，list 可能失败但这是正常的
     # 测试 get（这是必需的）
-    if KUBECONFIG="$KUBECONFIG_FILE" kubectl get pod -n kube-system $(kubectl get pods -n kube-system -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) > /dev/null 2>&1; then
-        echo_info "    ✓ 可以 get pod（必需权限）"
+    FIRST_POD=$(kubectl get pods -n kube-system -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    if [ -n "$FIRST_POD" ]; then
+        if KUBECONFIG="$KUBECONFIG_FILE" kubectl get pod "$FIRST_POD" -n kube-system > /dev/null 2>&1; then
+            echo_info "    ✓ 可以 get pod（必需权限）"
+        else
+            echo_warn "    ⚠️  无法 get pod（可能需要检查权限）"
+        fi
     else
-        echo_warn "    ⚠️  无法 get pod（可能需要检查权限）"
+        echo_warn "    ⚠️  没有可用的 Pod 用于测试"
     fi
     
-    # list 不是必需的，但测试一下
-    if KUBECONFIG="$KUBECONFIG_FILE" kubectl get pods -n kube-system --limit=1 > /dev/null 2>&1; then
+    # list 不是必需的，但测试一下（使用 head 限制输出）
+    if KUBECONFIG="$KUBECONFIG_FILE" kubectl get pods -n kube-system 2>&1 | head -1 | grep -q "NAME\|pod" > /dev/null 2>&1; then
         echo_info "    ✓ 可以 list pods（额外权限，非必需）"
     else
-        ERROR=$(KUBECONFIG="$KUBECONFIG_FILE" kubectl get pods -n kube-system --limit=1 2>&1)
+        ERROR=$(KUBECONFIG="$KUBECONFIG_FILE" kubectl get pods -n kube-system 2>&1 | head -3)
         echo_warn "    ⚠️  无法 list pods（这是正常的，官方文档不要求 list 权限）"
         echo "    错误: $ERROR"
     fi
