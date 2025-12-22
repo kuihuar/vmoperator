@@ -189,12 +189,15 @@ if kubectl get storageclass rook-ceph-block &>/dev/null; then
             
             echo_info "  创建新的 StorageClass（包含 Secret 配置）..."
             
+            # 使用临时文件创建 StorageClass（避免 heredoc 变量替换问题）
+            TEMP_FILE=$(mktemp)
+            trap "rm -f $TEMP_FILE" EXIT
+            
             # 获取现有 StorageClass 的其他配置
             RECLAIM_POLICY=$(echo "$STORAGE_CLASS_YAML" | grep -A 1 "reclaimPolicy" | grep "reclaimPolicy" | awk '{print $2}' || echo "Delete")
             ALLOW_EXPANSION=$(echo "$STORAGE_CLASS_YAML" | grep -A 1 "allowVolumeExpansion" | grep "allowVolumeExpansion" | awk '{print $2}' || echo "true")
             
-            # 创建新的 StorageClass
-            cat <<EOF | kubectl apply -f -
+            cat > "$TEMP_FILE" <<'STORAGECLASS_EOF'
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -205,17 +208,26 @@ parameters:
   pool: replicapool
   imageFormat: "2"
   imageFeatures: layering
-  csi.storage.k8s.io/provisioner-secret-name: $SECRET_NAME
-  csi.storage.k8s.io/provisioner-secret-namespace: $SECRET_NAMESPACE
-  csi.storage.k8s.io/controller-expand-secret-name: $SECRET_NAME
-  csi.storage.k8s.io/controller-expand-secret-namespace: $SECRET_NAMESPACE
-  csi.storage.k8s.io/node-stage-secret-name: $SECRET_NAME
-  csi.storage.k8s.io/node-stage-secret-namespace: $SECRET_NAMESPACE
-  csi.storage.k8s.io/node-publish-secret-name: $SECRET_NAME
-  csi.storage.k8s.io/node-publish-secret-namespace: $SECRET_NAMESPACE
-reclaimPolicy: $RECLAIM_POLICY
-allowVolumeExpansion: $ALLOW_EXPANSION
-EOF
+  csi.storage.k8s.io/provisioner-secret-name: SECRET_NAME_PLACEHOLDER
+  csi.storage.k8s.io/provisioner-secret-namespace: SECRET_NAMESPACE_PLACEHOLDER
+  csi.storage.k8s.io/controller-expand-secret-name: SECRET_NAME_PLACEHOLDER
+  csi.storage.k8s.io/controller-expand-secret-namespace: SECRET_NAMESPACE_PLACEHOLDER
+  csi.storage.k8s.io/node-stage-secret-name: SECRET_NAME_PLACEHOLDER
+  csi.storage.k8s.io/node-stage-secret-namespace: SECRET_NAMESPACE_PLACEHOLDER
+  csi.storage.k8s.io/node-publish-secret-name: SECRET_NAME_PLACEHOLDER
+  csi.storage.k8s.io/node-publish-secret-namespace: SECRET_NAMESPACE_PLACEHOLDER
+reclaimPolicy: RECLAIM_POLICY_PLACEHOLDER
+allowVolumeExpansion: ALLOW_EXPANSION_PLACEHOLDER
+STORAGECLASS_EOF
+            
+            # 替换占位符
+            sed -i "s/SECRET_NAME_PLACEHOLDER/$SECRET_NAME/g" "$TEMP_FILE"
+            sed -i "s/SECRET_NAMESPACE_PLACEHOLDER/$SECRET_NAMESPACE/g" "$TEMP_FILE"
+            sed -i "s/RECLAIM_POLICY_PLACEHOLDER/$RECLAIM_POLICY/g" "$TEMP_FILE"
+            sed -i "s/ALLOW_EXPANSION_PLACEHOLDER/$ALLOW_EXPANSION/g" "$TEMP_FILE"
+            
+            kubectl apply -f "$TEMP_FILE"
+            rm -f "$TEMP_FILE"
             
             echo_info "  ✓ StorageClass 已重新创建（包含 Secret 配置）"
         else
@@ -227,7 +239,11 @@ else
     echo_error "  ✗ StorageClass 不存在"
     echo_info "  创建 StorageClass..."
     
-    cat <<EOF | kubectl apply -f -
+    # 使用临时文件创建 StorageClass
+    TEMP_FILE=$(mktemp)
+    trap "rm -f $TEMP_FILE" EXIT
+    
+    cat > "$TEMP_FILE" <<'STORAGECLASS_EOF'
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -238,17 +254,24 @@ parameters:
   pool: replicapool
   imageFormat: "2"
   imageFeatures: layering
-  csi.storage.k8s.io/provisioner-secret-name: $SECRET_NAME
-  csi.storage.k8s.io/provisioner-secret-namespace: $SECRET_NAMESPACE
-  csi.storage.k8s.io/controller-expand-secret-name: $SECRET_NAME
-  csi.storage.k8s.io/controller-expand-secret-namespace: $SECRET_NAMESPACE
-  csi.storage.k8s.io/node-stage-secret-name: $SECRET_NAME
-  csi.storage.k8s.io/node-stage-secret-namespace: $SECRET_NAMESPACE
-  csi.storage.k8s.io/node-publish-secret-name: $SECRET_NAME
-  csi.storage.k8s.io/node-publish-secret-namespace: $SECRET_NAMESPACE
+  csi.storage.k8s.io/provisioner-secret-name: SECRET_NAME_PLACEHOLDER
+  csi.storage.k8s.io/provisioner-secret-namespace: SECRET_NAMESPACE_PLACEHOLDER
+  csi.storage.k8s.io/controller-expand-secret-name: SECRET_NAME_PLACEHOLDER
+  csi.storage.k8s.io/controller-expand-secret-namespace: SECRET_NAMESPACE_PLACEHOLDER
+  csi.storage.k8s.io/node-stage-secret-name: SECRET_NAME_PLACEHOLDER
+  csi.storage.k8s.io/node-stage-secret-namespace: SECRET_NAMESPACE_PLACEHOLDER
+  csi.storage.k8s.io/node-publish-secret-name: SECRET_NAME_PLACEHOLDER
+  csi.storage.k8s.io/node-publish-secret-namespace: SECRET_NAMESPACE_PLACEHOLDER
 reclaimPolicy: Delete
 allowVolumeExpansion: true
-EOF
+STORAGECLASS_EOF
+    
+    # 替换占位符
+    sed -i "s/SECRET_NAME_PLACEHOLDER/$SECRET_NAME/g" "$TEMP_FILE"
+    sed -i "s/SECRET_NAMESPACE_PLACEHOLDER/$SECRET_NAMESPACE/g" "$TEMP_FILE"
+    
+    kubectl apply -f "$TEMP_FILE"
+    rm -f "$TEMP_FILE"
     
     echo_info "  ✓ StorageClass 已创建"
 fi
