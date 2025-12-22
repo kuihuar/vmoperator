@@ -39,15 +39,40 @@ echo ""
 echo_info "1. 卸载 KubeVirt"
 echo ""
 
+# 先删除 webhook 配置（避免 webhook 错误）
+echo_info "  删除 ValidatingWebhookConfiguration..."
+kubectl delete validatingwebhookconfiguration kubevirt-validator --ignore-not-found=true --wait=false 2>/dev/null || true
+kubectl delete validatingwebhookconfiguration virt-api-validator --ignore-not-found=true --wait=false 2>/dev/null || true
+
+echo_info "  删除 MutatingWebhookConfiguration..."
+kubectl delete mutatingwebhookconfiguration kubevirt-mutator --ignore-not-found=true --wait=false 2>/dev/null || true
+kubectl delete mutatingwebhookconfiguration virt-api-mutator --ignore-not-found=true --wait=false 2>/dev/null || true
+
+# 删除所有 KubeVirt 相关的 webhook
+kubectl get validatingwebhookconfiguration -o name 2>/dev/null | grep kubevirt | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+kubectl get mutatingwebhookconfiguration -o name 2>/dev/null | grep kubevirt | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+
+sleep 3
+
+# 现在删除 KubeVirt CR
 if kubectl get kubevirt -n kubevirt kubevirt &>/dev/null; then
     echo_info "  删除 KubeVirt CR..."
-    kubectl delete kubevirt -n kubevirt kubevirt --ignore-not-found=true --wait=false
+    kubectl delete kubevirt -n kubevirt kubevirt --ignore-not-found=true --wait=false || {
+        echo_warn "  删除失败，尝试强制删除..."
+        kubectl patch kubevirt -n kubevirt kubevirt --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        kubectl delete kubevirt -n kubevirt kubevirt --ignore-not-found=true --wait=false || true
+    }
     sleep 5
 fi
 
+# 删除 KubeVirt 命名空间
 if kubectl get namespace kubevirt &>/dev/null; then
     echo_info "  删除 KubeVirt 命名空间..."
-    kubectl delete namespace kubevirt --ignore-not-found=true --wait=false
+    kubectl delete namespace kubevirt --ignore-not-found=true --wait=false || {
+        echo_warn "  删除失败，尝试强制删除..."
+        kubectl patch namespace kubevirt --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        kubectl delete namespace kubevirt --ignore-not-found=true --wait=false --grace-period=0 || true
+    }
 fi
 
 # ==========================================
@@ -57,15 +82,31 @@ echo ""
 echo_info "2. 卸载 CDI"
 echo ""
 
+# 删除 CDI webhook 配置
+kubectl get validatingwebhookconfiguration -o name 2>/dev/null | grep cdi | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+kubectl get mutatingwebhookconfiguration -o name 2>/dev/null | grep cdi | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+
+sleep 2
+
+# 删除 CDI CR
 if kubectl get cdi -n cdi cdi &>/dev/null; then
     echo_info "  删除 CDI CR..."
-    kubectl delete cdi -n cdi cdi --ignore-not-found=true --wait=false
+    kubectl delete cdi -n cdi cdi --ignore-not-found=true --wait=false || {
+        echo_warn "  删除失败，尝试强制删除..."
+        kubectl patch cdi -n cdi cdi --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        kubectl delete cdi -n cdi cdi --ignore-not-found=true --wait=false || true
+    }
     sleep 5
 fi
 
+# 删除 CDI 命名空间
 if kubectl get namespace cdi &>/dev/null; then
     echo_info "  删除 CDI 命名空间..."
-    kubectl delete namespace cdi --ignore-not-found=true --wait=false
+    kubectl delete namespace cdi --ignore-not-found=true --wait=false || {
+        echo_warn "  删除失败，尝试强制删除..."
+        kubectl patch namespace cdi --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        kubectl delete namespace cdi --ignore-not-found=true --wait=false --grace-period=0 || true
+    }
 fi
 
 # ==========================================
