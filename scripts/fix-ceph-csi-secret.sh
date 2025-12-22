@@ -172,20 +172,85 @@ if kubectl get storageclass rook-ceph-block &>/dev/null; then
     STORAGE_CLASS_YAML=$(kubectl get storageclass rook-ceph-block -o yaml)
     
     # 检查是否配置了 secretName
-    if echo "$STORAGE_CLASS_YAML" | grep -q "secretName"; then
+    if echo "$STORAGE_CLASS_YAML" | grep -q "csi.storage.k8s.io/provisioner-secret-name"; then
         echo_info "  ✓ StorageClass 已配置 secretName"
-        echo "$STORAGE_CLASS_YAML" | grep -A 2 "secretName"
+        echo "$STORAGE_CLASS_YAML" | grep -A 2 "csi.storage.k8s.io/provisioner-secret-name"
     else
         echo_warn "  ⚠️  StorageClass 未配置 secretName"
-        echo_info "  更新 StorageClass..."
+        echo_info "  StorageClass 的 parameters 无法更新，需要删除并重新创建"
+        echo ""
         
-        # 更新 StorageClass 添加 secretName
-        kubectl patch storageclass rook-ceph-block -p '{"parameters":{"csi.storage.k8s.io/provisioner-secret-name":"'$SECRET_NAME'","csi.storage.k8s.io/provisioner-secret-namespace":"'$SECRET_NAMESPACE'","csi.storage.k8s.io/controller-expand-secret-name":"'$SECRET_NAME'","csi.storage.k8s.io/controller-expand-secret-namespace":"'$SECRET_NAMESPACE'","csi.storage.k8s.io/node-stage-secret-name":"'$SECRET_NAME'","csi.storage.k8s.io/node-stage-secret-namespace":"'$SECRET_NAMESPACE'","csi.storage.k8s.io/node-publish-secret-name":"'$SECRET_NAME'","csi.storage.k8s.io/node-publish-secret-namespace":"'$SECRET_NAMESPACE'"}}'
+        read -p "是否删除并重新创建 StorageClass? (y/n，默认y): " RECREATE_SC
+        RECREATE_SC=${RECREATE_SC:-y}
         
-        echo_info "  ✓ StorageClass 已更新"
+        if [ "$RECREATE_SC" = "y" ]; then
+            echo_info "  删除现有 StorageClass..."
+            kubectl delete storageclass rook-ceph-block
+            
+            echo_info "  创建新的 StorageClass（包含 Secret 配置）..."
+            
+            # 获取现有 StorageClass 的其他配置
+            RECLAIM_POLICY=$(echo "$STORAGE_CLASS_YAML" | grep -A 1 "reclaimPolicy" | grep "reclaimPolicy" | awk '{print $2}' || echo "Delete")
+            ALLOW_EXPANSION=$(echo "$STORAGE_CLASS_YAML" | grep -A 1 "allowVolumeExpansion" | grep "allowVolumeExpansion" | awk '{print $2}' || echo "true")
+            
+            # 创建新的 StorageClass
+            cat <<EOF | kubectl apply -f -
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: rook-ceph-block
+provisioner: rook-ceph.rbd.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  pool: replicapool
+  imageFormat: "2"
+  imageFeatures: layering
+  csi.storage.k8s.io/provisioner-secret-name: $SECRET_NAME
+  csi.storage.k8s.io/provisioner-secret-namespace: $SECRET_NAMESPACE
+  csi.storage.k8s.io/controller-expand-secret-name: $SECRET_NAME
+  csi.storage.k8s.io/controller-expand-secret-namespace: $SECRET_NAMESPACE
+  csi.storage.k8s.io/node-stage-secret-name: $SECRET_NAME
+  csi.storage.k8s.io/node-stage-secret-namespace: $SECRET_NAMESPACE
+  csi.storage.k8s.io/node-publish-secret-name: $SECRET_NAME
+  csi.storage.k8s.io/node-publish-secret-namespace: $SECRET_NAMESPACE
+reclaimPolicy: $RECLAIM_POLICY
+allowVolumeExpansion: $ALLOW_EXPANSION
+EOF
+            
+            echo_info "  ✓ StorageClass 已重新创建（包含 Secret 配置）"
+        else
+            echo_warn "  已跳过 StorageClass 更新"
+            echo_warn "  注意: 没有 Secret 配置，PVC 可能仍然无法绑定"
+        fi
     fi
 else
     echo_error "  ✗ StorageClass 不存在"
+    echo_info "  创建 StorageClass..."
+    
+    cat <<EOF | kubectl apply -f -
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: rook-ceph-block
+provisioner: rook-ceph.rbd.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  pool: replicapool
+  imageFormat: "2"
+  imageFeatures: layering
+  csi.storage.k8s.io/provisioner-secret-name: $SECRET_NAME
+  csi.storage.k8s.io/provisioner-secret-namespace: $SECRET_NAMESPACE
+  csi.storage.k8s.io/controller-expand-secret-name: $SECRET_NAME
+  csi.storage.k8s.io/controller-expand-secret-namespace: $SECRET_NAMESPACE
+  csi.storage.k8s.io/node-stage-secret-name: $SECRET_NAME
+  csi.storage.k8s.io/node-stage-secret-namespace: $SECRET_NAMESPACE
+  csi.storage.k8s.io/node-publish-secret-name: $SECRET_NAME
+  csi.storage.k8s.io/node-publish-secret-namespace: $SECRET_NAMESPACE
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+EOF
+    
+    echo_info "  ✓ StorageClass 已创建"
 fi
 
 echo ""
