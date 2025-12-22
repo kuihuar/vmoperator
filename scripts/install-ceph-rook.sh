@@ -130,20 +130,41 @@ echo_info "5. 等待 Rook Operator 就绪"
 echo ""
 
 echo_info "  等待 Operator Pod 启动..."
-kubectl wait --for=condition=ready pod -l app=rook-ceph-operator -n rook-ceph --timeout=600s || {
-    echo_warn "  ⚠️  Operator 启动超时，检查状态..."
-    kubectl get pods -n rook-ceph
-    echo_warn "  继续等待，Operator 可能需要更多时间..."
-}
+MAX_WAIT=600
+WAITED=0
+OPERATOR_READY=false
 
-# 再次检查 Operator 是否就绪
-sleep 10
-if kubectl get pods -n rook-ceph -l app=rook-ceph-operator 2>/dev/null | grep -q Running; then
-    echo_info "  ✓ Operator 已就绪"
-else
-    echo_warn "  ⚠️  Operator 可能还在启动中，继续安装流程..."
+while [ $WAITED -lt $MAX_WAIT ]; do
+    if kubectl get pods -n rook-ceph -l app=rook-ceph-operator 2>/dev/null | grep -q "Running"; then
+        # 检查 Pod 是否真正 Ready（所有容器都 Ready）
+        READY_COUNT=$(kubectl get pods -n rook-ceph -l app=rook-ceph-operator -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null || echo "false")
+        if [ "$READY_COUNT" = "true" ]; then
+            echo_info "  ✓ Operator Pod 已就绪"
+            OPERATOR_READY=true
+            break
+        fi
+    fi
+    
+    echo "  等待中... ($WAITED/$MAX_WAIT 秒)"
+    sleep 5
+    WAITED=$((WAITED + 5))
+done
+
+if [ "$OPERATOR_READY" = false ]; then
+    echo_warn "  ⚠️  Operator 启动超时，检查状态..."
     kubectl get pods -n rook-ceph -l app=rook-ceph-operator
+    echo_warn "  是否继续创建 CephCluster？Operator 可能还在启动中..."
+    read -p "继续创建 CephCluster? (y/n，默认y): " CONTINUE
+    CONTINUE=${CONTINUE:-y}
+    if [[ ! $CONTINUE =~ ^[Yy]$ ]]; then
+        echo_info "  已取消，请等待 Operator 就绪后手动创建 CephCluster"
+        exit 0
+    fi
 fi
+
+# 额外等待几秒，确保 Operator 完全就绪
+echo_info "  等待 Operator 完全就绪（额外 10 秒）..."
+sleep 10
 
 # 6. 创建 Ceph Cluster
 echo ""
