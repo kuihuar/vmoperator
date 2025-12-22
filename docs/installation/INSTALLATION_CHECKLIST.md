@@ -143,6 +143,17 @@ kubectl get kubevirt -n kubevirt
 
 ## 步骤 4: 安装 Ceph/Rook
 
+### 前置准备
+
+**生产环境（推荐）:**
+- 准备未格式化的裸设备（如 `/dev/sdb`）
+- 确保设备未被挂载、未被使用、无文件系统
+- 检查设备: `sudo ./scripts/check-ceph-storage-device.sh`
+
+**开发/测试环境:**
+- 至少 50GB 可用磁盘空间
+- 可以使用目录存储
+
 ### 安装命令
 
 ```bash
@@ -151,8 +162,26 @@ sudo ./scripts/install-ceph-rook.sh
 
 ### 安装选项
 
-脚本会询问：
-- 部署方式：选择 `2`（使用目录存储，适合开发/测试）
+脚本会询问部署方式：
+
+1. **使用所有可用设备**（生产环境，多设备）
+2. **使用指定设备**（生产环境，推荐）- 选择此项，输入 `/dev/sdb`
+3. **使用目录存储**（开发/测试环境，单节点）- 默认选项
+
+### 配置注意事项
+
+#### 使用指定设备（选项 2）
+
+- ✅ 设备必须是未格式化的裸设备
+- ✅ 设备名称使用 `sdb` 而不是 `/dev/sdb`
+- ✅ 确保设备未被挂载或使用
+- ⚠️ 如果设备已格式化，需要先清除: `sudo wipefs -a /dev/sdb`
+
+#### 使用目录存储（选项 3）
+
+- ⚠️ 性能较低，不适合生产环境
+- ✅ 适合开发/测试环境
+- ✅ 目录会自动创建
 
 ### 验证
 
@@ -163,6 +192,12 @@ kubectl get pods -n rook-ceph
 # 检查 Ceph Cluster
 kubectl get cephcluster -n rook-ceph
 
+# 检查 OSD Pods
+kubectl get pods -n rook-ceph -l app=rook-ceph-osd
+
+# 检查存储设备使用情况
+sudo ./scripts/verify-ceph-using-sdb.sh
+
 # 检查 StorageClass
 kubectl get storageclass
 ```
@@ -170,8 +205,38 @@ kubectl get storageclass
 ### 预期状态
 
 - ✅ rook-ceph-operator: Running
-- ✅ Ceph Cluster 状态: Ready
+- ✅ rook-ceph-osd: Running（至少 1 个）
+- ✅ rook-ceph-mon: Running（至少 1 个）
+- ✅ Ceph Cluster 状态: Ready（或 HEALTH_WARN，单节点正常）
 - ✅ StorageClass: rook-ceph-block
+
+### 验证存储设备
+
+```bash
+# 检查设备是否被 Ceph 使用
+sudo lsof /dev/sdb | grep ceph-osd
+
+# 检查设备文件系统类型（应该是 ceph_bluestore）
+sudo blkid /dev/sdb
+```
+
+### 启用 Dashboard（可选）
+
+```bash
+# 检查 Dashboard 状态
+./scripts/check-ceph-dashboard.sh
+
+# 启用 Dashboard
+./scripts/enable-ceph-dashboard.sh
+
+# 访问 Dashboard（端口转发）
+kubectl port-forward -n rook-ceph svc/rook-ceph-mgr-dashboard 8443:8443
+# 浏览器访问: https://localhost:8443
+```
+
+### 详细文档
+
+参考完整安装文档: [INSTALL_CEPH_ROOK.md](INSTALL_CEPH_ROOK.md)
 
 ---
 
@@ -261,6 +326,33 @@ sed -i 's/127.0.0.1/你的节点IP/g' ~/.kube/config
 - 是否还有 Multus 配置残留
 - 网络是否正常
 - 资源是否充足
+
+### 问题 4: Ceph 未使用数据盘
+
+**检查**：
+```bash
+# 检查设备是否被使用
+sudo lsof /dev/sdb | grep ceph-osd
+
+# 检查 CephCluster 配置
+kubectl get cephcluster rook-ceph -n rook-ceph -o yaml | grep -A 20 "storage:"
+```
+
+**解决**：
+- 确保设备是未格式化的裸设备
+- 检查 CephCluster 配置中的设备名称是否正确
+- 参考: [INSTALL_CEPH_ROOK.md](INSTALL_CEPH_ROOK.md)
+
+### 问题 5: CSI Plugin 无法启动（rbd 模块错误）
+
+**错误**: `modprobe: ERROR: could not insert 'rbd': Exec format error`
+
+**原因**: 容器内核模块与主机不兼容
+
+**解决**：
+- 检查主机 rbd 模块: `ls /lib/modules/$(uname -r)/kernel/drivers/block/rbd.ko*`
+- 如果问题持续，考虑使用 CephFS 而不是 RBD
+- 参考: [INSTALL_CEPH_ROOK.md](INSTALL_CEPH_ROOK.md#常见问题)
 
 ---
 

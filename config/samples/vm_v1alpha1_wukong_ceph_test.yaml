@@ -1,7 +1,7 @@
 apiVersion: vm.novasphere.dev/v1alpha1
 kind: Wukong
 metadata:
-  name: ubuntu-separated-disks
+  name: ubuntu-ceph-test
   labels:
     app.kubernetes.io/name: novasphere
     app.kubernetes.io/managed-by: kustomize
@@ -9,7 +9,7 @@ spec:
   cpu: 2
   memory: 4Gi
   
-  # 系统盘和数据盘分离设计
+  # 使用 Ceph 存储
   disks:
     # 系统盘：用于操作系统和系统软件
     - name: system
@@ -24,12 +24,6 @@ spec:
       size: 2Gi
       storageClassName: rook-ceph-block   # 使用 Ceph 存储
       boot: false                     # 非启动盘
-    
-    # 数据盘 2：用于日志数据
-    # - name: logs
-    #   size: 50Gi
-    #   storageClassName: local-path
-    #   boot: false
   
   # Cloud-Init 用户配置
   cloudInitUser:
