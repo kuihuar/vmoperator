@@ -238,6 +238,27 @@ kubectl port-forward -n rook-ceph svc/rook-ceph-mgr-dashboard 8443:8443
 
 参考完整安装文档: [INSTALL_CEPH_ROOK.md](INSTALL_CEPH_ROOK.md)
 
+### 验证步骤（重要）
+
+在创建使用 Ceph 存储的 VM 之前，**必须**先验证以下项目：
+
+```bash
+# 1. 运行完整验证脚本
+./scripts/check-ceph-csi-provisioner.sh
+
+# 2. 验证 CSI Secret（关键）
+kubectl get secret rook-csi-rbd-provisioner -n rook-ceph
+kubectl get secret rook-csi-rbd-provisioner -n rook-ceph -o jsonpath='{.data}' | jq 'keys'
+
+# 3. 验证 StorageClass 配置
+kubectl get storageclass rook-ceph-block -o yaml | grep -A 2 "provisioner-secret-name"
+
+# 4. 如果发现问题，运行修复脚本
+sudo ./scripts/fix-ceph-csi-secret.sh
+```
+
+**详细验证步骤请参考**: [VERIFY_CEPH_STORAGE.md](VERIFY_CEPH_STORAGE.md)
+
 ---
 
 ## 步骤 5: 安装 Multus CNI（可选）

@@ -620,6 +620,7 @@ sudo ./scripts/verify-ceph-using-sdb.sh
 - [k3s 安装指南](INSTALL_K3S.md)
 - [KubeVirt 安装指南](INSTALL_KUBEVIRT.md)
 - [完整安装清单](INSTALLATION_CHECKLIST.md)
+- [Ceph 存储验证指南](VERIFY_CEPH_STORAGE.md) - **重要：创建 VM 前请先验证**
 
 ---
 
