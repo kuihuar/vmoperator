@@ -43,9 +43,9 @@ if kubectl get ns longhorn-system &>/dev/null; then
 fi
 
 # ------------------------------------------
-# 2. 选择 Longhorn 版本（固定为 v1.9.2）
+# 2. 选择 Longhorn 版本（固定为 v1.8.1，k3s 官方文档示例版本）
 # ------------------------------------------
-LONGHORN_VERSION="v1.9.2"
+LONGHORN_VERSION="v1.8.1"
 echo_info "1. 使用固定 Longhorn 版本: ${LONGHORN_VERSION}"
 
 # ------------------------------------------

@@ -19,6 +19,10 @@ echo_info "安装 k3s"
 echo_info "=========================================="
 echo ""
 
+# 目标 k3s 版本（与 Longhorn v1.8.1 兼容的稳定版本，可通过环境变量 K3S_VERSION 覆盖）
+DEFAULT_K3S_VERSION="v1.29.6+k3s1"
+K3S_VERSION="${K3S_VERSION:-$DEFAULT_K3S_VERSION}"
+
 # 检查是否已安装
 if command -v k3s &>/dev/null; then
     K3S_VERSION=$(k3s --version | head -1)
@@ -31,9 +35,12 @@ if command -v k3s &>/dev/null; then
     fi
 fi
 
-# 安装 k3s
-echo_info "1. 下载并安装 k3s..."
-curl -sfL https://get.k3s.io | sh -
+# 安装 k3s（固定版本，便于与 Longhorn 兼容）
+echo_info "1. 下载并安装 k3s（版本: ${K3S_VERSION}）..."
+
+# 如果需要从远程访问，可在此增加 --tls-san（示例使用 192.168.1.141）
+SERVER_IP="${SERVER_IP:-192.168.1.141}"
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${K3S_VERSION}" INSTALL_K3S_EXEC="server --tls-san ${SERVER_IP}" sh -
 
 # 等待 k3s 启动
 echo_info "2. 等待 k3s 启动（约 10 秒）..."
