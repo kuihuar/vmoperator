@@ -425,7 +425,23 @@ kubectl apply -f config/samples/vm_v1alpha1_wukong_ceph_test.yaml
 
 ---
 
-### Q3: 如何验证数据是否存储在数据盘上
+### Q3: Tools Pod 镜像版本
+
+**问题**: Tools Pod 应该使用什么镜像版本？
+
+**答案**: 
+- Tools Pod 镜像版本必须与 Rook Operator 版本一致
+- Rook Operator v1.13.0 → Tools Pod: `rook/ceph:v1.13.0`
+- 不要使用 `quay.io/ceph/ceph:v18.2.0`（这是原生 Ceph 镜像，用于 CephCluster，不用于 Tools Pod）
+
+**版本对应关系：**
+| Rook Operator 版本 | Tools Pod 镜像 | Ceph 版本（CephCluster） |
+|-------------------|---------------|------------------------|
+| v1.13.0 | `rook/ceph:v1.13.0` | `quay.io/ceph/ceph:v18.2.0` |
+
+---
+
+### Q4: 如何验证数据是否存储在数据盘上
 
 **验证步骤：**
 

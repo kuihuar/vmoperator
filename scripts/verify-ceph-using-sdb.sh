@@ -106,9 +106,9 @@ spec:
   dnsPolicy: ClusterFirstWithHostNet
   containers:
   - name: rook-ceph-tools
-    image: quay.io/ceph/ceph:v18.2.0
-    command: ["/tini"]
-    args: ["-g", "--", "/usr/local/bin/toolbox.sh"]
+    image: rook/ceph:v1.13.0
+    command: ["/bin/bash"]
+    args: ["-c", "while true; do sleep 3600; done"]
     imagePullPolicy: IfNotPresent
     env:
       - name: ROOK_CEPH_USERNAME

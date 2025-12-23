@@ -435,6 +435,91 @@ kubectl -n rook-ceph get secret rook-ceph-dashboard-password -o jsonpath="{.data
 
 ---
 
+## Tools Pod 配置
+
+### 创建 rook-ceph-tools Pod
+
+Ceph Tools Pod 用于执行 Ceph 管理命令（如创建存储池、查看集群状态等）。
+
+**重要注意事项：**
+- Tools Pod 镜像版本必须与 Rook Operator 版本一致
+- Rook Operator v1.13.0 应使用 `rook/ceph:v1.13.0` 镜像
+- 不要使用 `quay.io/ceph/ceph:v18.2.0`（这是原生 Ceph 镜像版本，与 Rook 版本不对应）
+
+**创建 Tools Pod：**
+
+```bash
+# 使用脚本创建（推荐）
+./scripts/fix-ceph-tools-pod.sh
+
+# 或手动创建
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rook-ceph-tools
+  namespace: rook-ceph
+  labels:
+    app: rook-ceph-tools
+spec:
+  dnsPolicy: ClusterFirstWithHostNet
+  containers:
+  - name: rook-ceph-tools
+    image: rook/ceph:v1.13.0  # 必须与 Rook Operator 版本一致
+    command: ["/bin/bash"]
+    args: ["-c", "while true; do sleep 3600; done"]
+    imagePullPolicy: IfNotPresent
+    env:
+      - name: ROOK_CEPH_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: rook-ceph-mon
+            key: ceph-username
+      - name: ROOK_CEPH_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: rook-ceph-mon
+            key: ceph-secret
+    volumeMounts:
+      - name: mon-endpoint-volume
+        mountPath: /etc/rook
+    tty: true
+    stdin: true
+  volumes:
+    - name: mon-endpoint-volume
+      configMap:
+        name: rook-ceph-mon-endpoints
+        items:
+        - key: data
+          path: mon-endpoints
+EOF
+```
+
+**版本对应关系：**
+
+| Rook Operator 版本 | Tools Pod 镜像 | Ceph 版本（CephCluster 使用） |
+|-------------------|---------------|---------------------------|
+| v1.13.0 | `rook/ceph:v1.13.0` | `quay.io/ceph/ceph:v18.2.0` |
+
+**注意：**
+- `rook/ceph:v1.13.0`：Rook 提供的工具箱镜像，包含 Rook 工具和 Ceph 命令
+- `quay.io/ceph/ceph:v18.2.0`：原生 Ceph 镜像，用于 CephCluster 配置中的 `cephVersion.image`
+
+**验证 Tools Pod：**
+
+```bash
+# 检查 Pod 状态
+kubectl get pod rook-ceph-tools -n rook-ceph
+
+# 检查镜像版本
+kubectl get pod rook-ceph-tools -n rook-ceph -o jsonpath='{.spec.containers[0].image}'
+
+# 测试 Ceph 命令
+kubectl exec -n rook-ceph rook-ceph-tools -- ceph status
+```
+
+---
+
 ## 常见问题
 
 ### 1. CSI Plugin 无法启动（rbd 模块错误）
@@ -532,8 +617,15 @@ sudo blkid /dev/sdb
 
 ### 4. Ceph 版本
 
-- **当前使用**: `quay.io/ceph/ceph:v18.2.0` (Ceph Pacific)
-- **更新**: 可以修改 `spec.cephVersion.image` 来使用其他版本
+- **CephCluster 使用**: `quay.io/ceph/ceph:v18.2.0` (Ceph Pacific)
+  - 这是原生 Ceph 镜像版本，用于 Ceph 集群运行时
+  - 配置在 `spec.cephVersion.image` 字段
+- **Tools Pod 使用**: `rook/ceph:v1.13.0` (必须与 Rook Operator 版本一致)
+  - 这是 Rook 提供的工具箱镜像，包含 Rook 工具和 Ceph 命令
+  - 不要使用原生 Ceph 镜像创建 Tools Pod
+- **版本对应关系**:
+  - Rook Operator v1.13.0 → Tools Pod: `rook/ceph:v1.13.0`
+  - CephCluster: `quay.io/ceph/ceph:v18.2.0`（根据 Rook 版本推荐的 Ceph 版本）
 - **注意**: 版本升级需要谨慎，建议先测试
 
 ### 5. StorageClass 配置
