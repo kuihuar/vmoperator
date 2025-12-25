@@ -42,12 +42,99 @@ fi
 if kubectl get ns longhorn-system &>/dev/null; then
     echo_warn "检测到已有 longhorn-system 命名空间，可能已安装 Longhorn。"
     kubectl get pods -n longhorn-system || true
-    read -p "是否继续重新安装 Longhorn？(y/n，默认n): " REINSTALL
-    REINSTALL=${REINSTALL:-n}
-    if [[ ! $REINSTALL =~ ^[Yy]$ ]]; then
-        echo_info "  跳过安装 Longhorn"
-        exit 0
-    fi
+    echo ""
+    echo_info "重新安装选项："
+    echo "  1. 清理所有配置并重新安装（保留镜像）"
+    echo "  2. 直接重新安装（不清理）"
+    echo "  3. 跳过安装"
+    read -p "请选择 (1/2/3，默认3): " REINSTALL_OPTION
+    REINSTALL_OPTION=${REINSTALL_OPTION:-3}
+    
+    case "${REINSTALL_OPTION}" in
+        1)
+            echo_info "  选择：清理所有配置并重新安装（保留镜像）"
+            echo ""
+            echo_warn "  将执行以下操作："
+            echo "    - 删除 longhorn-system 命名空间（包括所有资源）"
+            echo "    - 删除 Longhorn CRDs"
+            echo "    - 删除 Longhorn StorageClass"
+            echo "    - 保留容器镜像（不删除）"
+            echo ""
+            read -p "  确认继续？(y/n，默认n): " CONFIRM_CLEAN
+            CONFIRM_CLEAN=${CONFIRM_CLEAN:-n}
+            if [[ ! $CONFIRM_CLEAN =~ ^[Yy]$ ]]; then
+                echo_info "  已取消"
+                exit 0
+            fi
+            
+            # 清理 Longhorn
+            echo_info "  开始清理 Longhorn..."
+            
+            # 1. 删除所有 PVC（可选，避免数据丢失）
+            echo_info "    检查 PVC..."
+            PVC_COUNT=$(kubectl get pvc -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\n"}{end}' 2>/dev/null | wc -l)
+            if [ "${PVC_COUNT}" -gt 0 ]; then
+                echo_warn "    发现 ${PVC_COUNT} 个 PVC，删除 PVC 会导致数据丢失"
+                read -p "    是否删除所有 PVC？(y/n，默认n): " DELETE_PVC
+                DELETE_PVC=${DELETE_PVC:-n}
+                if [[ $DELETE_PVC =~ ^[Yy]$ ]]; then
+                    echo_info "    删除所有 PVC..."
+                    kubectl delete pvc --all -A 2>/dev/null || true
+                fi
+            fi
+            
+            # 2. 删除 StorageClass
+            echo_info "    删除 StorageClass..."
+            kubectl delete storageclass longhorn longhorn-static 2>/dev/null || true
+            
+            # 3. 删除命名空间（这会删除命名空间内的所有资源）
+            echo_info "    删除 longhorn-system 命名空间..."
+            kubectl delete namespace longhorn-system 2>/dev/null || true
+            
+            # 4. 等待命名空间删除完成
+            echo_info "    等待命名空间删除完成（最多 60 秒）..."
+            for i in {1..60}; do
+                if ! kubectl get ns longhorn-system &>/dev/null; then
+                    echo_info "    ✓ 命名空间已删除"
+                    break
+                fi
+                if [ $i -eq 60 ]; then
+                    echo_warn "    ⚠️  命名空间删除超时，继续..."
+                    break
+                fi
+                sleep 1
+                echo -n "."
+            done
+            echo ""
+            
+            # 5. 删除 CRDs（可选，因为重新安装会重新创建）
+            echo_info "    删除 Longhorn CRDs..."
+            kubectl delete crd -l app.kubernetes.io/name=longhorn 2>/dev/null || true
+            kubectl delete crd volumes.longhorn.io replicas.longhorn.io engines.longhorn.io nodes.longhorn.io settings.longhorn.io engineimages.longhorn.io 2>/dev/null || true
+            
+            # 6. 清理 finalizers（如果有残留资源）
+            echo_info "    清理残留资源..."
+            kubectl get volumes.longhorn.io -A -o json 2>/dev/null | \
+                jq -r '.items[] | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
+                while read ns name; do
+                    kubectl patch volumes.longhorn.io "${name}" -n "${ns}" --type='merge' -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+                done || true
+            
+            echo_info "  ✓ Longhorn 清理完成（镜像已保留）"
+            echo ""
+            ;;
+        2)
+            echo_info "  选择：直接重新安装（不清理）"
+            ;;
+        3)
+            echo_info "  跳过安装 Longhorn"
+            exit 0
+            ;;
+        *)
+            echo_info "  无效选择，跳过安装"
+            exit 0
+            ;;
+    esac
 fi
 
 # ------------------------------------------
