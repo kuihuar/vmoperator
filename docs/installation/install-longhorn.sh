@@ -2,6 +2,13 @@
 
 # 安装 Longhorn（适用于单节点或多节点 k3s/k8s 集群）
 # 使用本地修改后的 longhorn_v1.8.1.yaml（已去掉 healthz 探针，适配当前 k3s）
+#
+# ⚠️  重要提示：
+# - 已去掉 Kubernetes readinessProbe（kubelet 的外部检查）
+# - 但 longhorn-manager 进程内部的 webhook 健康检查无法通过 YAML 配置禁用
+# - 如果遇到 "conversion webhook service is not accessible" 错误导致 CrashLoop，
+#   这是 Longhorn v1.8.1 在当前 k3s 环境下的兼容性问题
+# - 建议：如果持续 CrashLoop，考虑使用 k3s 自带的 local-path 存储
 
 set -e
 

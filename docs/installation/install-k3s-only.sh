@@ -40,7 +40,30 @@ echo_info "1. 下载并安装 k3s（版本: ${K3S_VERSION}）..."
 
 # 如果需要从远程访问，可在此增加 --tls-san（示例使用 192.168.1.141）
 SERVER_IP="${SERVER_IP:-192.168.1.141}"
-curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${K3S_VERSION}" INSTALL_K3S_EXEC="server --tls-san ${SERVER_IP}" sh -
+
+# 是否禁用 ServiceLB（如果遇到 DNS 解析到 198.18.x.x 的问题，可以禁用）
+# 禁用 ServiceLB 后，将无法使用 LoadBalancer 类型的 Service
+# 可以通过环境变量 DISABLE_SERVICELB=true 来禁用
+DISABLE_SERVICELB="${DISABLE_SERVICELB:-false}"
+
+# 构建 k3s server 启动参数
+K3S_SERVER_ARGS="server --tls-san ${SERVER_IP}"
+
+# 如果禁用 ServiceLB
+if [[ "${DISABLE_SERVICELB}" =~ ^[Tt]rue$ ]]; then
+    echo_warn "  ⚠️  将禁用 ServiceLB（无法使用 LoadBalancer 类型的 Service）"
+    K3S_SERVER_ARGS="${K3S_SERVER_ARGS} --disable servicelb"
+else
+    echo_info "  ServiceLB 已启用（可以使用 LoadBalancer 类型的 Service）"
+fi
+
+# 注意：k3s 默认配置通常已经足够，除非有特殊需求，否则不需要额外参数
+# 如果需要自定义网络配置，确保所有节点使用相同的值（见 k3s 官方文档）
+echo_info "  使用默认网络配置（cluster-cidr: 10.42.0.0/16, service-cidr: 10.43.0.0/16）"
+echo_info "  如需自定义，请通过环境变量或修改脚本"
+
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${K3S_VERSION}" \
+  INSTALL_K3S_EXEC="${K3S_SERVER_ARGS}" sh -
 
 # 等待 k3s 启动
 echo_info "2. 等待 k3s 启动（约 10 秒）..."
@@ -90,9 +113,21 @@ echo ""
 echo_info "kubeconfig 位置: ~/.kube/config"
 echo_info "k3s 配置文件: /etc/rancher/k3s/k3s.yaml"
 echo ""
+
+# 提示 DNS 验证
+echo_info "7. DNS 验证提示..."
+echo_info "  如果遇到 DNS 解析到 198.18.x.x 的问题，可以运行："
+echo_info "    kubectl run -it --rm test-dns --image=busybox --restart=Never -- nslookup kubernetes.default.svc.cluster.local"
+echo_info "  如果解析到 198.18.x.x 且无法连接，可以禁用 ServiceLB 重新安装"
+
+echo ""
 echo_info "下一步:"
 echo "  1. 安装 CDI: 参考 docs/installation/INSTALLATION_CHECKLIST.md"
 echo "  2. 安装 KubeVirt: 参考 docs/installation/INSTALLATION_CHECKLIST.md"
-echo "  3. 安装 Ceph: sudo ./scripts/install-ceph-rook.sh"
+echo "  3. 安装 Longhorn: ./docs/installation/install-longhorn.sh"
+echo ""
+echo_info "如果遇到 DNS 解析到 198.18.x.x 的问题："
+echo "  参考文档: docs/installation/DNS_198_18_ISSUE.md"
+echo "  解决方案: DISABLE_SERVICELB=true ./docs/installation/install-k3s-only.sh"
 echo ""
 
