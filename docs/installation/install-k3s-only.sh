@@ -46,8 +46,12 @@ SERVER_IP="${SERVER_IP:-192.168.1.141}"
 # 可以通过环境变量 DISABLE_SERVICELB=true 来禁用
 DISABLE_SERVICELB="${DISABLE_SERVICELB:-false}"
 
+# 网络配置（可通过环境变量覆盖，默认值与 k3s 默认值相同）
+CLUSTER_CIDR="${CLUSTER_CIDR:-10.42.0.0/16}"
+SERVICE_CIDR="${SERVICE_CIDR:-10.43.0.0/16}"
+
 # 构建 k3s server 启动参数
-K3S_SERVER_ARGS="server --tls-san ${SERVER_IP}"
+K3S_SERVER_ARGS="server --tls-san ${SERVER_IP} --cluster-cidr ${CLUSTER_CIDR} --service-cidr ${SERVICE_CIDR}"
 
 # 如果禁用 ServiceLB
 if [[ "${DISABLE_SERVICELB}" =~ ^[Tt]rue$ ]]; then
@@ -57,10 +61,11 @@ else
     echo_info "  ServiceLB 已启用（可以使用 LoadBalancer 类型的 Service）"
 fi
 
-# 注意：k3s 默认配置通常已经足够，除非有特殊需求，否则不需要额外参数
-# 如果需要自定义网络配置，确保所有节点使用相同的值（见 k3s 官方文档）
-echo_info "  使用默认网络配置（cluster-cidr: 10.42.0.0/16, service-cidr: 10.43.0.0/16）"
-echo_info "  如需自定义，请通过环境变量或修改脚本"
+# 显示网络配置
+echo_info "  网络配置："
+echo_info "    cluster-cidr: ${CLUSTER_CIDR}（Pod 网络）"
+echo_info "    service-cidr: ${SERVICE_CIDR}（Service 网络）"
+echo_info "  如需自定义，可通过环境变量 CLUSTER_CIDR 和 SERVICE_CIDR 覆盖"
 
 curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${K3S_VERSION}" \
   INSTALL_K3S_EXEC="${K3S_SERVER_ARGS}" sh -
