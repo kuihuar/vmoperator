@@ -1,4 +1,21 @@
-[INFO] 1. 下载并安装 k3s...
+./docs/installation/install-k3s-only.sh
+
+[INFO] ==========================================
+[INFO] 安装 k3s
+[INFO] ==========================================
+
+[INFO]   将安装最新稳定版本（推荐，可能修复 DNS 问题）
+[INFO] 1. 下载并安装 k3s（版本: ）...
+[INFO]   ServiceLB 已启用（可以使用 LoadBalancer 类型的 Service）
+[INFO]   网络配置：
+[INFO]     cluster-cidr: 10.42.0.0/16（Pod 网络）
+[INFO]     service-cidr: 10.43.0.0/16（Service 网络）
+[INFO]   如需自定义，可通过环境变量 CLUSTER_CIDR 和 SERVICE_CIDR 覆盖
+[INFO]   实际安装参数：
+[INFO]     INSTALL_K3S_VERSION=
+[INFO]     INSTALL_K3S_EXEC=server --tls-san 192.168.1.141 --cluster-cidr 10.42.0.0/16 --service-cidr 10.43.0.0/16
+
+[sudo] password for jianfen:
 [INFO]  Finding release for channel stable
 [INFO]  Using v1.33.6+k3s1 as release
 [INFO]  Downloading hash https://github.com/k3s-io/k3s/releases/download/v1.33.6+k3s1/sha256sum-amd64.txt
@@ -16,6 +33,9 @@
 [INFO]  systemd: Enabling k3s unit
 Created symlink /etc/systemd/system/multi-user.target.wants/k3s.service → /etc/systemd/system/k3s.service.
 [INFO]  systemd: Starting k3s
+
+[INFO]   验证安装后的配置...
+[INFO]     ✓ 网络参数已正确配置
 [INFO] 2. 等待 k3s 启动（约 10 秒）...
 [INFO]   ✓ k3s 运行中
 [INFO] 3. 配置 kubeconfig...
@@ -23,7 +43,7 @@ Created symlink /etc/systemd/system/multi-user.target.wants/k3s.service → /etc
 [INFO]   如果需要从远程访问，请修改 ~/.kube/config
 [INFO] 4. 验证安装...
 NAME    STATUS   ROLES                  AGE   VERSION
-host1   Ready    control-plane,master   10s   v1.33.6+k3s1
+host1   Ready    control-plane,master   12s   v1.33.6+k3s1
 
 [INFO] 5. k3s 版本信息:
 k3s version v1.33.6+k3s1 (b5847677)
@@ -32,13 +52,6 @@ go version go1.24.9
 [INFO] 6. k3s 服务状态:
 ● k3s.service - Lightweight Kubernetes
      Loaded: loaded (/etc/systemd/system/k3s.service; enabled; preset: enabled)
-    Drop-In: /etc/systemd/system/k3s.service.d
-             └─override.conf
-     Active: active (running) since Mon 2025-12-22 21:11:13 CST; 10s ago
-
-[INFO] ==========================================
-[INFO] k3s 安装完成
-[INFO] ==========================================
-
-[INFO] kubeconfig 位置: ~/.kube/config
-[INFO] k3s 配置文件: /etc/rancher/k3s/k3s.yaml
+     Active: active (running) since Thu 2025-12-25 12:48:59 CST; 12s ago
+       Docs: https://k3s.io
+    Process: 1356044 ExecStartPre=/sbin/modprobe br_netfilter (code=exited, status=0/SUCCESS)

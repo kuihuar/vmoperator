@@ -105,6 +105,7 @@ LONGHORN_DATA_PATH=/data/longhorn ./docs/installation/install-longhorn.sh
 # 1. 先手动格式化并挂载 /dev/sdb（参考方法一的步骤 2-4）
 sudo mkfs.ext4 /dev/sdb
 sudo mkdir -p /data/longhorn
+sudo chmod 755 /data/longhorn
 sudo mount /dev/sdb /data/longhorn
 
 # 2. 运行安装脚本，脚本会自动检查并修复目录权限
