@@ -19,9 +19,20 @@ echo_info "安装 k3s"
 echo_info "=========================================="
 echo ""
 
-# 目标 k3s 版本（与 Longhorn v1.8.1 兼容的稳定版本，可通过环境变量 K3S_VERSION 覆盖）
-DEFAULT_K3S_VERSION="v1.29.6+k3s1"
+# 目标 k3s 版本（可通过环境变量 K3S_VERSION 覆盖）
+# 默认使用最新稳定版本（如果遇到 DNS 198.18.x.x 问题，可以尝试最新版本）
+# 如果需要固定版本（如与 Longhorn v1.8.1 兼容），可以设置 K3S_VERSION="v1.29.6+k3s1"
+DEFAULT_K3S_VERSION=""  # 空值表示使用最新版本
 K3S_VERSION="${K3S_VERSION:-$DEFAULT_K3S_VERSION}"
+
+# 如果指定了版本，使用指定版本；否则使用最新版本
+if [ -n "${K3S_VERSION}" ]; then
+    echo_info "  将安装指定版本: ${K3S_VERSION}"
+    INSTALL_VERSION_ARG="INSTALL_K3S_VERSION=\"${K3S_VERSION}\""
+else
+    echo_info "  将安装最新稳定版本（推荐，可能修复 DNS 问题）"
+    INSTALL_VERSION_ARG=""
+fi
 
 # 检查是否已安装
 if command -v k3s &>/dev/null; then
@@ -87,8 +98,14 @@ echo_info "    INSTALL_K3S_EXEC=${K3S_SERVER_ARGS}"
 echo ""
 
 # 安装 k3s
-curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${K3S_VERSION}" \
-  INSTALL_K3S_EXEC="${K3S_SERVER_ARGS}" sh -
+if [ -n "${K3S_VERSION}" ]; then
+    # 使用指定版本
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${K3S_VERSION}" \
+      INSTALL_K3S_EXEC="${K3S_SERVER_ARGS}" sh -
+else
+    # 使用最新版本
+    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="${K3S_SERVER_ARGS}" sh -
+fi
 
 # 验证安装后的配置
 echo ""
