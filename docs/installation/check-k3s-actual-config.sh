@@ -22,9 +22,16 @@ fi
 
 echo ""
 echo "3. 检查是否禁用 ServiceLB："
-if sudo systemctl cat k3s 2>/dev/null | grep -qE "disable.*servicelb|--disable servicelb"; then
-    echo "   ✓ 已禁用 ServiceLB"
-elif sudo ps aux | grep "k3s server" | grep -v grep | grep -qE "disable.*servicelb|--disable servicelb"; then
+if sudo systemctl cat k3s 2>/dev/null | grep -qE "disable.*servicelb|--disable.*servicelb"; then
+    echo "   ✓ systemd 配置中已禁用 ServiceLB"
+    # 检查进程是否真的应用了配置
+    K3S_CMD=$(sudo cat /proc/$(pgrep -f "k3s.*server" | head -1)/cmdline 2>/dev/null | tr '\0' ' ')
+    if echo "${K3S_CMD}" | grep -qE "disable.*servicelb|--disable.*servicelb"; then
+        echo "   ✓ 进程已应用配置（ServiceLB 已禁用）"
+    else
+        echo "   ⚠️  配置中有，但进程可能未应用（需要重启 k3s）"
+    fi
+elif sudo ps aux | grep "k3s" | grep -v grep | grep -qE "disable.*servicelb|--disable.*servicelb"; then
     echo "   ✓ 已禁用 ServiceLB（在进程命令行中）"
 else
     echo "   ✗ 未禁用 ServiceLB"

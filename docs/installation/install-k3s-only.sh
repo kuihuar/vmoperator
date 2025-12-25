@@ -33,6 +33,19 @@ if command -v k3s &>/dev/null; then
         echo_info "  跳过安装"
         exit 0
     fi
+    # 重新安装前，先卸载旧版本以确保配置完全清理
+    echo_info "  卸载旧版本..."
+    if [ -f /usr/local/bin/k3s-uninstall.sh ]; then
+        sudo /usr/local/bin/k3s-uninstall.sh || echo_warn "  卸载脚本执行失败，继续安装..."
+    fi
+    # 清理 systemd 服务文件（如果存在）
+    if [ -f /etc/systemd/system/k3s.service ]; then
+        sudo systemctl stop k3s 2>/dev/null || true
+        sudo systemctl disable k3s 2>/dev/null || true
+        sudo rm -f /etc/systemd/system/k3s.service
+        sudo rm -rf /etc/systemd/system/k3s.service.d
+        sudo systemctl daemon-reload
+    fi
 fi
 
 # 安装 k3s（固定版本，便于与 Longhorn 兼容）
@@ -67,8 +80,26 @@ echo_info "    cluster-cidr: ${CLUSTER_CIDR}（Pod 网络）"
 echo_info "    service-cidr: ${SERVICE_CIDR}（Service 网络）"
 echo_info "  如需自定义，可通过环境变量 CLUSTER_CIDR 和 SERVICE_CIDR 覆盖"
 
+# 显示将要使用的参数（用于调试）
+echo_info "  实际安装参数："
+echo_info "    INSTALL_K3S_VERSION=${K3S_VERSION}"
+echo_info "    INSTALL_K3S_EXEC=${K3S_SERVER_ARGS}"
+echo ""
+
+# 安装 k3s
 curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${K3S_VERSION}" \
   INSTALL_K3S_EXEC="${K3S_SERVER_ARGS}" sh -
+
+# 验证安装后的配置
+echo ""
+echo_info "  验证安装后的配置..."
+sleep 2
+if sudo systemctl cat k3s 2>/dev/null | grep -qE "cluster-cidr|service-cidr"; then
+    echo_info "    ✓ 网络参数已正确配置"
+else
+    echo_warn "    ⚠️  警告：systemd 配置中未找到网络参数"
+    echo_warn "    可能需要手动检查或重新安装"
+fi
 
 # 等待 k3s 启动
 echo_info "2. 等待 k3s 启动（约 10 秒）..."
