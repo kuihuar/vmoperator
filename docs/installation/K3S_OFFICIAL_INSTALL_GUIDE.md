@@ -92,9 +92,38 @@ k3s --version
 
 ## 常见问题
 
-### DNS 解析问题
+### DNS 解析问题（解析到 198.18.x.x）
 
-如果遇到 DNS 解析到 `198.18.x.x`：
+**根本原因**：系统中存在名为 "Meta" 的网络设备，该设备有 198.18.x.x 的 IP 地址，导致 DNS 解析错误。
+
+**解决方案**：
+
+1. **检查 Meta 设备**
+   ```bash
+   ip link show | grep Meta
+   ip addr show Meta
+   ```
+
+2. **删除 Meta 设备**
+   ```bash
+   sudo ip link set Meta down
+   sudo ip link delete Meta
+   ```
+
+3. **重启系统**
+   ```bash
+   sudo reboot
+   ```
+
+4. **验证 DNS 解析**
+   ```bash
+   kubectl run -it --rm test-dns --image=busybox --restart=Never -- \
+     nslookup kubernetes.default.svc.cluster.local
+   ```
+
+**注意**：删除 Meta 设备后需要重启系统，确保配置生效。
+
+**其他检查项**（如果删除 Meta 设备后问题仍然存在）：
 
 1. **检查 ServiceLB 是否禁用**
    ```bash
@@ -104,12 +133,6 @@ k3s --version
 2. **检查网络配置**
    ```bash
    sudo systemctl cat k3s | grep -E "cluster-cidr|service-cidr"
-   ```
-
-3. **测试 DNS 解析**
-   ```bash
-   kubectl run -it --rm test-dns --image=busybox --restart=Never -- \
-     nslookup kubernetes.default.svc.cluster.local
    ```
 
 ### 卸载 k3s

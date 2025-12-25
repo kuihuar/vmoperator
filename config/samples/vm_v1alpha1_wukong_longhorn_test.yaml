@@ -14,7 +14,7 @@ spec:
     # 系统盘：20Gi（适合开发/测试环境）
     # 生产环境建议 30-50Gi
     - name: system
-      size: 20Gi
+      size: 5Gi
       storageClassName: longhorn  # 使用 Longhorn
       boot: true
       # 使用 HTTP 源下载镜像
@@ -23,7 +23,7 @@ spec:
     # 数据盘：50Gi（测试系统盘和数据盘分离）
     # 生产环境根据实际需求调整（100Gi-2Ti）
     - name: data
-      size: 50Gi
+      size: 2Gi
       storageClassName: longhorn
       boot: false
   
