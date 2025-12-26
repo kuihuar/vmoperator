@@ -55,3 +55,11 @@ go version go1.24.9
      Active: active (running) since Thu 2025-12-25 12:48:59 CST; 12s ago
        Docs: https://k3s.io
     Process: 1356044 ExecStartPre=/sbin/modprobe br_netfilter (code=exited, status=0/SUCCESS)
+
+
+ 1560  sudo ip link set Meta down
+ 1561  sudo ip link delete Meta
+ 1562  kubectl get pods -A
+ 1563  sudo systemctl stop openvpn.service
+ 1564  sudo systemctl disable --now openvpn.service
+ 1565  sudo systemctl status openvpn.service

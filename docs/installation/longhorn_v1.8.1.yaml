@@ -107,7 +107,7 @@ data:
       staleReplicaTimeout: "30"
       fromBackup: ""
       fsType: "ext4"
-      dataLocality: "disabled"
+      dataLocality: "disabled"lb
       unmapMarkSnapChainRemoved: "ignored"
       disableRevisionCounter: "false"
       dataEngine: "v1"
