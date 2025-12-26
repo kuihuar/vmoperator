@@ -3,12 +3,21 @@
 # 安装 Longhorn（适用于单节点或多节点 k3s/k8s 集群）
 # 使用本地修改后的 longhorn_v1.8.1.yaml（已去掉 healthz 探针，适配当前 k3s）
 #
+# 使用方法：
+#   1. 使用环境变量指定数据盘路径：
+#      LONGHORN_DATA_PATH=/data/longhorn ./docs/installation/install-longhorn.sh
+#   2. 使用命令行参数指定数据盘路径：
+#      ./docs/installation/install-longhorn.sh /data/longhorn
+#   3. 使用默认路径 /data/longhorn：
+#      ./docs/installation/install-longhorn.sh
+#
 # ⚠️  重要提示：
 # - 已去掉 Kubernetes readinessProbe（kubelet 的外部检查）
 # - 但 longhorn-manager 进程内部的 webhook 健康检查无法通过 YAML 配置禁用
 # - 如果遇到 "conversion webhook service is not accessible" 错误导致 CrashLoop，
 #   这是 Longhorn v1.8.1 在当前 k3s 环境下的兼容性问题
 # - 建议：如果持续 CrashLoop，考虑使用 k3s 自带的 local-path 存储
+# - 数据盘路径：脚本会替换 hostPath 中的路径，但保持容器内的 mountPath 为 /var/lib/longhorn/
 
 set -e
 
@@ -138,9 +147,21 @@ if kubectl get ns longhorn-system &>/dev/null; then
 fi
 
 # ------------------------------------------
-# 2. 配置数据盘路径（可通过环境变量覆盖）
+# 2. 配置数据盘路径（可通过环境变量或命令行参数覆盖）
 # ------------------------------------------
-LONGHORN_DATA_PATH="${LONGHORN_DATA_PATH:-/data/longhorn}"
+# 优先使用命令行参数，然后是环境变量，最后是默认值
+if [ -n "$1" ]; then
+    LONGHORN_DATA_PATH="$1"
+elif [ -n "${LONGHORN_DATA_PATH}" ]; then
+    LONGHORN_DATA_PATH="${LONGHORN_DATA_PATH}"
+else
+    LONGHORN_DATA_PATH="/data/longhorn"
+fi
+
+# 规范化路径（确保以 / 结尾）
+LONGHORN_DATA_PATH="${LONGHORN_DATA_PATH%/}/"
+LONGHORN_DATA_PATH="${LONGHORN_DATA_PATH%//}/"
+
 echo_info "1. 配置 Longhorn 数据存储路径: ${LONGHORN_DATA_PATH}"
 
 # ------------------------------------------
@@ -287,12 +308,39 @@ echo_info "  - 已优化 driver-deployer init 容器（添加超时机制，避�
 TEMP_YAML=$(mktemp)
 echo_info "3. 准备安装配置（数据盘路径: ${LONGHORN_DATA_PATH}）..."
 
-# 复制 yaml 文件并替换数据盘路径
-sed "s|/var/lib/longhorn/|${LONGHORN_DATA_PATH}/|g" "${LONGHORN_YAML}" > "${TEMP_YAML}"
+# 替换策略：
+# 1. 先替换所有的 path: /var/lib/longhorn/ 为新的数据盘路径
+# 2. 然后恢复 mountPath（容器内路径必须保持 /var/lib/longhorn/）
+# 这样可以确保只替换 hostPath 中的 path，而不影响 mountPath
 
-# 确保路径以 / 结尾（如果用户输入的路径没有 /，自动添加）
-sed -i.bak "s|path: ${LONGHORN_DATA_PATH}[^/]|path: ${LONGHORN_DATA_PATH}/|g" "${TEMP_YAML}" 2>/dev/null || true
-rm -f "${TEMP_YAML}.bak" 2>/dev/null || true
+# 第一步：替换所有 path: /var/lib/longhorn/
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS 使用 BSD sed
+    sed "s|path: /var/lib/longhorn/|path: ${LONGHORN_DATA_PATH}|g" "${LONGHORN_YAML}" > "${TEMP_YAML}"
+    # 恢复 mountPath（容器内路径必须保持 /var/lib/longhorn/）
+    sed -i '' "s|mountPath: ${LONGHORN_DATA_PATH}|mountPath: /var/lib/longhorn/|g" "${TEMP_YAML}" 2>/dev/null || true
+else
+    # Linux 使用 GNU sed
+    sed "s|path: /var/lib/longhorn/|path: ${LONGHORN_DATA_PATH}|g" "${LONGHORN_YAML}" > "${TEMP_YAML}"
+    # 恢复 mountPath（容器内路径必须保持 /var/lib/longhorn/）
+    sed -i.bak "s|mountPath: ${LONGHORN_DATA_PATH}|mountPath: /var/lib/longhorn/|g" "${TEMP_YAML}" 2>/dev/null || true
+    rm -f "${TEMP_YAML}.bak" 2>/dev/null || true
+fi
+
+# 验证替换结果
+HOSTPATH_COUNT=$(grep -c "path: ${LONGHORN_DATA_PATH}" "${TEMP_YAML}" 2>/dev/null || echo "0")
+MOUNTPATH_COUNT=$(grep -c "mountPath: /var/lib/longhorn/" "${TEMP_YAML}" 2>/dev/null || echo "0")
+
+if [ "${HOSTPATH_COUNT}" -gt 0 ]; then
+    echo_info "  ✓ 已替换 ${HOSTPATH_COUNT} 处 hostPath 路径为: ${LONGHORN_DATA_PATH}"
+    if [ "${MOUNTPATH_COUNT}" -gt 0 ]; then
+        echo_info "  ✓ mountPath 已恢复为容器内路径: /var/lib/longhorn/ (${MOUNTPATH_COUNT} 处)"
+    fi
+else
+    echo_error "  ✗ 路径替换失败，请检查 LONGHORN_DATA_PATH 设置"
+    echo_debug "  当前 LONGHORN_DATA_PATH: ${LONGHORN_DATA_PATH}"
+    exit 1
+fi
 
 # ------------------------------------------
 # 4.1 检查并处理默认 StorageClass 冲突
