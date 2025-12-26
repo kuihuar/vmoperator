@@ -205,9 +205,12 @@ else
     LONGHORN_DATA_PATH="/data/longhorn"
 fi
 
-# 规范化路径（确保以 / 结尾）
-LONGHORN_DATA_PATH="${LONGHORN_DATA_PATH%/}/"
-LONGHORN_DATA_PATH="${LONGHORN_DATA_PATH%//}/"
+# 规范化路径（确保以 / 结尾，且只有一个斜杠）
+# 先移除所有末尾的斜杠，然后添加一个
+while [[ "${LONGHORN_DATA_PATH}" == */ ]]; do
+    LONGHORN_DATA_PATH="${LONGHORN_DATA_PATH%/}"
+done
+LONGHORN_DATA_PATH="${LONGHORN_DATA_PATH}/"
 
 echo_info "1. 配置 Longhorn 数据存储路径: ${LONGHORN_DATA_PATH}"
 
