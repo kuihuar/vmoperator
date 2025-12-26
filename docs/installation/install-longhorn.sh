@@ -69,6 +69,12 @@ if kubectl get ns longhorn-system &>/dev/null; then
             echo "    - 删除 Longhorn StorageClass"
             echo "    - 保留容器镜像（不删除）"
             echo ""
+            echo_info "  清理模式："
+            echo "    1. 快速模式（推荐，跳过等待，直接强制清理）"
+            echo "    2. 标准模式（等待资源正常删除，较慢）"
+            read -p "  选择清理模式 (1/2，默认1): " CLEAN_MODE
+            CLEAN_MODE=${CLEAN_MODE:-1}
+            
             read -p "  确认继续？(y/n，默认n): " CONFIRM_CLEAN
             CONFIRM_CLEAN=${CONFIRM_CLEAN:-n}
             if [[ ! $CONFIRM_CLEAN =~ ^[Yy]$ ]]; then
@@ -77,9 +83,31 @@ if kubectl get ns longhorn-system &>/dev/null; then
             fi
             
             # 清理 Longhorn
-            echo_info "  开始清理 Longhorn..."
+            echo_info "  开始清理 Longhorn（模式: $([ "${CLEAN_MODE}" = "1" ] && echo "快速" || echo "标准")）..."
             
-            # 1. 删除所有 PVC（可选，避免数据丢失）
+            # 1. 先清理 finalizers（快速模式优先清理，避免等待）
+            if [ "${CLEAN_MODE}" = "1" ]; then
+                echo_info "    快速模式：先清理 finalizers..."
+                
+                # 清理 Volume finalizers
+                echo_info "      清理 Volume finalizers..."
+                kubectl get volumes.longhorn.io -A -o json 2>/dev/null | \
+                    jq -r '.items[] | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
+                    while read ns name; do
+                        kubectl patch volumes.longhorn.io "${name}" -n "${ns}" --type='json' -p='[{"op": "remove", "path": "/metadata/finalizers"}]' 2>/dev/null || true
+                    done || true
+                
+                # 清理 Engine Image finalizers
+                echo_info "      清理 Engine Image finalizers..."
+                kubectl get engineimages.longhorn.io -n longhorn-system -o json 2>/dev/null | \
+                    jq -r '.items[] | .metadata.name' 2>/dev/null | \
+                    while read name; do
+                        kubectl patch engineimages.longhorn.io "${name}" -n longhorn-system \
+                            --type='json' -p='[{"op": "remove", "path": "/metadata/finalizers"}]' 2>/dev/null || true
+                    done || true
+            fi
+            
+            # 2. 删除所有 PVC（可选，避免数据丢失）
             echo_info "    检查 PVC..."
             PVC_COUNT=$(kubectl get pvc -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\n"}{end}' 2>/dev/null | wc -l)
             if [ "${PVC_COUNT}" -gt 0 ]; then
@@ -88,46 +116,65 @@ if kubectl get ns longhorn-system &>/dev/null; then
                 DELETE_PVC=${DELETE_PVC:-n}
                 if [[ $DELETE_PVC =~ ^[Yy]$ ]]; then
                     echo_info "    删除所有 PVC..."
-                    kubectl delete pvc --all -A 2>/dev/null || true
+                    kubectl delete pvc --all -A --timeout=10s 2>/dev/null || true
                 fi
             fi
             
-            # 2. 删除 StorageClass
+            # 3. 删除 StorageClass
             echo_info "    删除 StorageClass..."
-            kubectl delete storageclass longhorn longhorn-static 2>/dev/null || true
+            kubectl delete storageclass longhorn longhorn-static --timeout=10s 2>/dev/null || true
             
-            # 3. 删除命名空间（这会删除命名空间内的所有资源）
+            # 4. 删除命名空间
             echo_info "    删除 longhorn-system 命名空间..."
-            kubectl delete namespace longhorn-system 2>/dev/null || true
+            kubectl delete namespace longhorn-system --timeout=10s 2>/dev/null || true
             
-            # 4. 等待命名空间删除完成
-            echo_info "    等待命名空间删除完成（最多 60 秒）..."
-            for i in {1..60}; do
-                if ! kubectl get ns longhorn-system &>/dev/null; then
-                    echo_info "    ✓ 命名空间已删除"
-                    break
+            # 5. 等待或强制清理命名空间
+            if [ "${CLEAN_MODE}" = "1" ]; then
+                # 快速模式：只等待 5 秒，然后强制清理
+                echo_info "    快速模式：等待 5 秒后强制清理..."
+                sleep 5
+                if kubectl get namespace longhorn-system &>/dev/null; then
+                    echo_warn "    命名空间仍在，强制清理 finalizers..."
+                    kubectl get namespace longhorn-system -o json 2>/dev/null | \
+                        jq '.spec.finalizers = []' 2>/dev/null | \
+                        kubectl replace --raw /api/v1/namespaces/longhorn-system/finalize -f - 2>/dev/null || true
+                    sleep 2
                 fi
-                if [ $i -eq 60 ]; then
-                    echo_warn "    ⚠️  命名空间删除超时，继续..."
-                    break
-                fi
-                sleep 1
-                echo -n "."
-            done
-            echo ""
+            else
+                # 标准模式：等待最多 30 秒
+                echo_info "    等待命名空间删除完成（最多 30 秒）..."
+                for i in {1..30}; do
+                    if ! kubectl get ns longhorn-system &>/dev/null; then
+                        echo_info "    ✓ 命名空间已删除"
+                        break
+                    fi
+                    if [ $i -eq 30 ]; then
+                        echo_warn "    ⚠️  命名空间删除超时，强制清理..."
+                        kubectl get namespace longhorn-system -o json 2>/dev/null | \
+                            jq '.spec.finalizers = []' 2>/dev/null | \
+                            kubectl replace --raw /api/v1/namespaces/longhorn-system/finalize -f - 2>/dev/null || true
+                        break
+                    fi
+                    sleep 1
+                    echo -n "."
+                done
+                echo ""
+            fi
             
-            # 5. 删除 CRDs（可选，因为重新安装会重新创建）
+            # 6. 删除 CRDs（并行删除，加快速度）
             echo_info "    删除 Longhorn CRDs..."
-            kubectl delete crd -l app.kubernetes.io/name=longhorn 2>/dev/null || true
-            kubectl delete crd volumes.longhorn.io replicas.longhorn.io engines.longhorn.io nodes.longhorn.io settings.longhorn.io engineimages.longhorn.io 2>/dev/null || true
+            kubectl delete crd -l app.kubernetes.io/name=longhorn --timeout=10s 2>/dev/null || true
+            kubectl delete crd volumes.longhorn.io replicas.longhorn.io engines.longhorn.io nodes.longhorn.io settings.longhorn.io engineimages.longhorn.io backingimagedatasources.longhorn.io backingimagemanagers.longhorn.io backingimages.longhorn.io --timeout=10s 2>/dev/null || true
             
-            # 6. 清理 finalizers（如果有残留资源）
-            echo_info "    清理残留资源..."
-            kubectl get volumes.longhorn.io -A -o json 2>/dev/null | \
-                jq -r '.items[] | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
-                while read ns name; do
-                    kubectl patch volumes.longhorn.io "${name}" -n "${ns}" --type='merge' -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
-                done || true
+            # 7. 清理残留资源（快速模式已清理，这里只做补充）
+            if [ "${CLEAN_MODE}" != "1" ]; then
+                echo_info "    清理残留资源..."
+                kubectl get volumes.longhorn.io -A -o json 2>/dev/null | \
+                    jq -r '.items[] | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
+                    while read ns name; do
+                        kubectl patch volumes.longhorn.io "${name}" -n "${ns}" --type='json' -p='[{"op": "remove", "path": "/metadata/finalizers"}]' 2>/dev/null || true
+                    done || true
+            fi
             
             echo_info "  ✓ Longhorn 清理完成（镜像已保留）"
             echo ""
