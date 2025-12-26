@@ -211,6 +211,8 @@ LONGHORN_DATA_PATH="${LONGHORN_DATA_PATH%//}/"
 
 echo_info "1. 配置 Longhorn 数据存储路径: ${LONGHORN_DATA_PATH}"
 
+sudo chmod 755 ${LONGHORN_DATA_PATH}
+
 # ------------------------------------------
 # 2.1 数据盘要求说明
 # ------------------------------------------
