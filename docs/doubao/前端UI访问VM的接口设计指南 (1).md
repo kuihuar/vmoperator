@@ -560,6 +560,238 @@ Authorization: Bearer {token}
 
 补充说明：无论选择哪种网关，均需确保其支持前文定义的RESTful接口与WebSocket协议，且能与K3s的Service、Ingress资源无缝集成，保障前端（Web/桌面/移动端）访问VM的稳定性与安全性。
 
+### 5. VNC/SPICE流量转发具体配置示例
+
+以下配置示例基于K3s环境，前提是已通过KubeVirt创建VM，并为VM暴露VNC/SPICE服务（通过NodePort Service，示例中VNC端口为5900、SPICE端口为5901）。核心逻辑是通过网关的TCP转发功能，将外部virt-viewer的连接请求转发至集群内VM的对应服务端口。
+
+#### 5.1 Traefik配置示例（TCP路由转发）
+
+Traefik通过Kubernetes CRD（IngressRouteTCP）配置TCP路由，无需额外插件，直接实现VNC/SPICE流量转发。
+
+##### 5.1.1 前置准备：确认VM的VNC/SPICE Service
+
+假设已为VM创建NodePort类型的Service（名称：vm-console-service，命名空间：default），暴露端口如下：
+
+```Plain Text
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: vm-console-service
+  namespace: default
+spec:
+  selector:
+    kubevirt.io/domain: test-vm  # 匹配KubeVirt VM的标签
+  ports:
+  - name: vnc
+    port: 5900
+    targetPort: 5900
+    nodePort: 30590  # 集群节点暴露的VNC端口
+  - name: spice
+    port: 5901
+    targetPort: 5901
+    nodePort: 30591  # 集群节点暴露的SPICE端口
+  type: NodePort
+```
+
+##### 5.1.2 Traefik TCP路由配置（IngressRouteTCP）
+
+```Plain Text
+
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: vm-console-traefik
+  namespace: default
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: vnc,spice  # 对应Traefik的入口点
+spec:
+  entryPoints:
+  - vnc  # Traefik需提前配置vnc入口点（监听主机5900端口）
+  - spice  # Traefik需提前配置spice入口点（监听主机5901端口）
+  routes:
+  - match: HostSNI(`*`)  # TCP无Host头，用HostSNI(`*`)匹配所有请求
+    kind: Rule
+    services:
+    - name: vm-console-service
+      port: 5900  # 对应VNC服务端口
+  - match: HostSNI(`*`)
+    kind: Rule
+    services:
+    - name: vm-console-service
+      port: 5901  # 对应SPICE服务端口
+  # 可选：添加基础认证（限制virt-viewer访问）
+  tls:
+    passthrough: true  # 若VM控制台启用TLS，需开启透传
+```
+
+##### 5.1.3 Traefik入口点配置（修改Traefik部署）
+
+需在Traefik的部署配置中添加vnc和spice入口点，监听主机的5900和5901端口：
+
+```Plain Text
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  template:
+    spec:
+      containers:
+      - name: traefik
+        args:
+        - --entrypoints.web.address=:80
+        - --entrypoints.websecure.address=:443
+        - --entrypoints.vnc.address=:5900  # 新增VNC入口点
+        - --entrypoints.spice.address=:5901  # 新增SPICE入口点
+        - --providers.kubernetesingress
+        - --providers.kubernetescrd
+```
+
+##### 5.1.4 验证与访问
+
+1. 确认Traefik路由生效：执行`kubectl get ingressroutetcp -n default`，查看vm-console-traefik状态为正常；
+2. virt-viewer访问：在本地执行命令 `virt-viewer vnc://<Traefik部署节点IP>:5900`，即可通过Traefik转发连接到VM的VNC控制台。
+
+#### 5.2 Kong配置示例（TCP代理转发）
+
+Kong通过KongIngress和Service配置TCP代理，需先确保Kong Ingress Controller已部署在K3s集群中。
+
+##### 5.2.1 前置准备：同Traefik示例的vm-console-service
+
+复用上述5.1.1中的vm-console-service，确保VNC/SPICE端口已通过NodePort暴露。
+
+##### 5.2.2 创建Kong TCP服务（对应VM控制台Service）
+
+```Plain Text
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: vm-console-kong-service
+  namespace: default
+  annotations:
+    konghq.com/protocol: tcp  # 指定协议为TCP
+    konghq.com/port: "5900"  # 默认转发VNC端口
+spec:
+  type: ExternalName
+  externalName: vm-console-service.default.svc.cluster.local  # 指向VM的控制台Service
+```
+
+##### 5.2.3 配置KongIngress（TCP路由规则）
+
+```Plain Text
+
+apiVersion: configuration.konghq.com/v1
+kind: KongIngress
+metadata:
+  name: vm-console-kong-ingress
+  namespace: default
+proxy:
+  protocol: tcp
+  port: 5900
+route:
+  protocols:
+  - tcp
+  tcp:
+    sessionAffinity: none  # 关闭会话亲和性（TCP场景无需）
+```
+
+##### 5.2.4 配置Kong监听端口（修改Kong部署）
+
+修改Kong的部署配置，添加TCP监听端口5900（VNC）和5901（SPICE）：
+
+```Plain Text
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+  namespace: kong
+spec:
+  template:
+    spec:
+      containers:
+      - name: kong
+        env:
+        - name: KONG_PROXY_LISTEN
+          value: 0.0.0.0:80, 0.0.0.0:443 ssl, 0.0.0.0:5900 tcp, 0.0.0.0:5901 tcp  # 新增TCP监听端口
+        - name: KONG_ADMIN_LISTEN
+          value: 0.0.0.0:8444 ssl
+```
+
+##### 5.2.5 配置SPICE端口转发（新增Kong服务）
+
+如需支持SPICE，重复5.2.2-5.2.3步骤，创建指向5901端口的Kong服务和KongIngress：
+
+```Plain Text
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: vm-console-spice-kong-service
+  namespace: default
+  annotations:
+    konghq.com/protocol: tcp
+    konghq.com/port: "5901"
+spec:
+  type: ExternalName
+  externalName: vm-console-service.default.svc.cluster.local
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongIngress
+metadata:
+  name: vm-console-spice-kong-ingress
+  namespace: default
+proxy:
+  protocol: tcp
+  port: 5901
+route:
+  protocols:
+  - tcp
+```
+
+##### 5.2.6 验证与访问
+
+1. 确认Kong服务生效：执行`kubectl get svc -n default | grep kong-service`，查看服务状态正常；
+2. virt-viewer访问：在本地执行命令 `virt-viewer vnc://<Kong部署节点IP>:5900` 或 `virt-viewer spice://<Kong部署节点IP>:5901`，即可通过Kong转发连接到VM的对应控制台。
+
+#### 5.3 配置关键注意事项
+
+- 端口冲突：确保Traefik/Kong监听的主机端口（5900/5901）未被集群内其他服务占用；
+
+- 安全控制：生产环境需为TCP转发添加认证（如Traefik的Basic Auth、Kong的IP黑白名单插件），避免未授权访问；
+
+- 协议匹配：VNC/SPICE均为TCP协议，网关需配置纯TCP转发，不可启用HTTP/HTTPS转换；
+
+- K3s适配：Traefik为K3s默认Ingress Controller，部署时可直接通过Helm Chart启用TCP入口点；Kong需手动部署Ingress Controller，适配K3s的轻量级环境。
+
+- **部署复杂度**：Traefik部署极简，在K3s中可通过Helm Chart一键部署，自动适配集群网络，无需额外配置服务发现；Kong部署需额外配置Ingress Controller、数据库（PostgreSQL/Cassandra，用于存储插件与路由规则），部署步骤更多，维护成本更高。
+
+- **学习成本**：Traefik配置简洁，与Kubernetes资源紧密绑定，熟悉K8s的开发/运维人员可快速上手；Kong需学习其专属概念（如Service、Route、Plugin）与配置逻辑，学习曲线更陡。
+
+### 3. 在VM访问场景中的适配性分析
+
+结合前文前端访问VM的核心场景（接口调用、控制台长连接、Service访问配置），两者的适配性各有侧重：
+
+- **Traefik适配场景**：① 纯K3s云原生环境，需快速实现前端请求路由与VM服务自动发现；② 以VM控制台访问（WebSocket长连接）为核心需求，追求低配置成本；③ 边缘节点或资源受限环境，需要轻量化网关；④ 团队熟悉Kubernetes，希望网关配置与集群资源深度融合。
+
+- **Kong适配场景**：① 需对VM访问接口进行全生命周期管理（如接口版本控制、灰度发布）；② 有高强度安全需求（如WAF防护、细粒度限流、多维度认证）；③ 需集成多种第三方工具（如监控、日志、认证服务），依赖丰富插件生态；④ 混合部署环境（既有K3s集群内VM，也有集群外物理机/VM），需要通用化网关适配。
+
+### 4. 选型建议
+
+结合本文档的K3s+Kubebuilder+KubeVirt技术栈与前端访问VM的核心需求，给出以下选型建议：
+
+- 优先选Traefik的场景：如果团队以K3s云原生部署为核心，追求“部署简单、零配置维护”，且核心需求是VM接口路由、控制台WebSocket转发、基础认证与监控，Traefik是更优选择，可快速适配前文定义的VM访问接口与前端方案，降低架构复杂度。
+
+- 优先选Kong的场景：如果需要对VM访问接口进行精细化管理（如多版本兼容、灰度发布），或有高强度安全需求（如企业级WAF、多租户权限隔离），或需要集成多种第三方工具，Kong的丰富插件生态与灵活配置更能满足需求，但需投入更多精力进行部署与维护。
+
+- 折中方案：小型团队或轻量场景可先用Traefik快速落地；随着业务扩展（如VM数量增多、访问场景复杂），可逐步迁移至Kong，或采用“Traefik作为边缘网关（负责入口路由）+ Kong作为内部API网关（负责接口精细化管理）”的分层架构。
+
+补充说明：无论选择哪种网关，均需确保其支持前文定义的RESTful接口与WebSocket协议，且能与K3s的Service、Ingress资源无缝集成，保障前端（Web/桌面/移动端）访问VM的稳定性与安全性。
+
 - 离线缓存：缓存VM列表、详情等数据，支持离线查看历史信息，联网后自动同步最新状态。
 
 #### 1.2 适用场景与优势
