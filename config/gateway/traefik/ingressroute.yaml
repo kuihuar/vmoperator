@@ -1,0 +1,21 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: novasphere-api
+  namespace: novasphere-system
+spec:
+  entryPoints:
+  - web
+  - websecure
+  routes:
+  - match: Host(`api.novasphere.io`) && PathPrefix(`/api/v1`)
+    kind: Rule
+    services:
+    - name: novasphere-api
+      port: 8080
+    middlewares:
+    - name: cors
+    - name: rate-limit
+  tls:
+    certResolver: letsencrypt
+

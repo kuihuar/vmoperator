@@ -152,6 +152,24 @@ ifndef ignore-not-found
   ignore-not-found = false
 endif
 
+##@ Gateway
+
+.PHONY: deploy-gateway-kong
+deploy-gateway-kong: ## Deploy Kong Gateway
+	kubectl apply -k config/gateway/kong/
+
+.PHONY: deploy-gateway-traefik
+deploy-gateway-traefik: ## Deploy Traefik Gateway
+	kubectl apply -k config/gateway/traefik/
+
+.PHONY: undeploy-gateway-kong
+undeploy-gateway-kong: ## Undeploy Kong Gateway
+	kubectl delete -k config/gateway/kong/ --ignore-not-found=$(ignore-not-found)
+
+.PHONY: undeploy-gateway-traefik
+undeploy-gateway-traefik: ## Undeploy Traefik Gateway
+	kubectl delete -k config/gateway/traefik/ --ignore-not-found=$(ignore-not-found)
+
 .PHONY: install
 install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
 	@out="$$( "$(KUSTOMIZE)" build config/crd 2>/dev/null || true )"; \

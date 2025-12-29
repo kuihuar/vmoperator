@@ -1,0 +1,8 @@
+# Kong Gateway Kustomization
+resources:
+  - namespace.yaml
+  - kong-deployment.yaml
+  - kong-service.yaml
+  - kong-config.yaml
+  - ingress.yaml
+

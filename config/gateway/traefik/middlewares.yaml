@@ -1,0 +1,35 @@
+# CORS 中间件
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: cors
+  namespace: novasphere-system
+spec:
+  headers:
+    accessControlAllowMethods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+    accessControlAllowOriginList:
+    - "*"
+    accessControlAllowHeaders:
+    - Content-Type
+    - Authorization
+    - X-Client-Type
+    accessControlMaxAge: 3600
+    addVaryHeader: true
+---
+# 限流中间件
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: novasphere-system
+spec:
+  rateLimit:
+    average: 100
+    period: 1m
+    burst: 200
+

@@ -1,0 +1,8 @@
+# Traefik Gateway Kustomization
+resources:
+  - namespace.yaml
+  - traefik-deployment.yaml
+  - traefik-service.yaml
+  - ingressroute.yaml
+  - middlewares.yaml
+

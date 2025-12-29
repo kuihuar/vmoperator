@@ -1,0 +1,20 @@
+# Development environment configuration
+# This configuration disables webhook for easier development and debugging
+
+namespace: novasphere-system
+namePrefix: novasphere-
+
+resources:
+- ../crd
+- ../rbac
+- ../manager
+# Webhook is disabled in development environment
+# - ../webhook
+
+patches:
+# Disable webhook in manager
+- path: manager_webhook_disable_patch.yaml
+  target:
+    kind: Deployment
+    name: controller-manager
+

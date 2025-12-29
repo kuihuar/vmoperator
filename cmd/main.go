@@ -67,6 +67,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var enableWebhook bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -85,6 +86,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.BoolVar(&enableWebhook, "enable-webhook", true,
+		"If set, webhook validation and defaulting will be enabled. Set to false for development environment.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -190,6 +193,17 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Wukong")
 		os.Exit(1)
+	}
+
+	// 注册 Webhook（如果启用）
+	if enableWebhook {
+		if err = (&vmv1alpha1.Wukong{}).SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "Wukong")
+			os.Exit(1)
+		}
+		setupLog.Info("Webhook enabled")
+	} else {
+		setupLog.Info("Webhook disabled (development mode)")
 	}
 	// +kubebuilder:scaffold:builder
 
