@@ -107,9 +107,9 @@ data:
       staleReplicaTimeout: "30"
       fromBackup: ""
       fsType: "ext4"
-      dataLocality: "disabled"lb
+      dataLocality: "disabled"
       unmapMarkSnapChainRemoved: "ignored"
-      disableRevisionCounter: "false"
+      disableRevisionCounter: "true"
       dataEngine: "v1"
 ---
 # Source: longhorn/templates/crds.yaml
@@ -4978,6 +4978,11 @@ spec:
           name: admission-wh
         - containerPort: 9503
           name: recov-backend
+        readinessProbe:
+          httpGet:
+            path: /v1/healthz
+            port: 9501
+            scheme: HTTPS
         volumeMounts:
         - name: boot
           mountPath: /host/boot/
@@ -5068,7 +5073,7 @@ spec:
       initContainers:
         - name: wait-longhorn-manager
           image: longhornio/longhorn-manager:v1.8.1
-          command: ['sh', '-c', 'max_attempts=150; attempt=0; while [ $attempt -lt $max_attempts ]; do if [ $(curl -m 1 -s -o /dev/null -w "%{http_code}" http://longhorn-backend:9500/v1) = "200" ]; then echo "longhorn-manager is ready"; exit 0; fi; echo "waiting for longhorn-manager (attempt $((attempt+1))/$max_attempts)..."; sleep 2; attempt=$((attempt+1)); done; echo "warning: longhorn-manager not ready after $max_attempts attempts, continuing anyway"; exit 0']
+          command: ['sh', '-c', 'while [ $(curl -m 1 -s -o /dev/null -w "%{http_code}" http://longhorn-backend:9500/v1) != "200" ]; do echo waiting; sleep 2; done']
       containers:
         - name: longhorn-driver-deployer
           image: longhornio/longhorn-manager:v1.8.1

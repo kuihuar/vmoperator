@@ -20,24 +20,16 @@ echo_info "=========================================="
 echo ""
 
 # 目标 k3s 版本（可通过环境变量 K3S_VERSION 覆盖）
-# 默认使用最新稳定版本（如果遇到 DNS 198.18.x.x 问题，可以尝试最新版本）
-# 如果需要固定版本（如与 Longhorn v1.8.1 兼容），可以设置 K3S_VERSION="v1.29.6+k3s1"
-DEFAULT_K3S_VERSION=""  # 空值表示使用最新版本
-K3S_VERSION="${K3S_VERSION:-$DEFAULT_K3S_VERSION}"
-
-# 如果指定了版本，使用指定版本；否则使用最新版本
-if [ -n "${K3S_VERSION}" ]; then
-    echo_info "  将安装指定版本: ${K3S_VERSION}"
-    INSTALL_VERSION_ARG="INSTALL_K3S_VERSION=\"${K3S_VERSION}\""
-else
-    echo_info "  将安装最新稳定版本（推荐，可能修复 DNS 问题）"
-    INSTALL_VERSION_ARG=""
-fi
+# 默认使用 v1.33.6+k3s1（如果遇到 DNS 198.18.x.x 问题，可以尝试最新版本）
+# 如果需要使用最新版本，可以设置 K3S_VERSION="" 或删除此默认值
+DEFAULT_K3S_VERSION="v1.33.6+k3s1"  # 默认版本
+# 保存用户设置的版本（如果存在）
+USER_K3S_VERSION="${K3S_VERSION:-$DEFAULT_K3S_VERSION}"
 
 # 检查是否已安装
 if command -v k3s &>/dev/null; then
-    K3S_VERSION=$(k3s --version | head -1)
-    echo_warn "  k3s 已安装: $K3S_VERSION"
+    INSTALLED_K3S_VERSION=$(k3s --version | head -1)
+    echo_warn "  k3s 已安装: $INSTALLED_K3S_VERSION"
     read -p "是否重新安装？(y/n，默认n): " REINSTALL
     REINSTALL=${REINSTALL:-n}
     if [[ ! $REINSTALL =~ ^[Yy]$ ]]; then
@@ -59,8 +51,18 @@ if command -v k3s &>/dev/null; then
     fi
 fi
 
+# 设置要安装的版本（使用用户设置的版本，如果未设置则使用默认值）
+K3S_VERSION="${USER_K3S_VERSION}"
+
+# 如果指定了版本，使用指定版本；否则使用最新版本
+if [ -n "${K3S_VERSION}" ]; then
+    echo_info "  将安装指定版本: ${K3S_VERSION}"
+else
+    echo_info "  将安装最新稳定版本（推荐，可能修复 DNS 问题）"
+fi
+
 # 安装 k3s（固定版本，便于与 Longhorn 兼容）
-echo_info "1. 下载并安装 k3s（版本: ${K3S_VERSION}）..."
+echo_info "1. 下载并安装 k3s（版本: ${K3S_VERSION:-最新版本}）..."
 
 # 如果需要从远程访问，可在此增加 --tls-san（示例使用 192.168.1.141）
 SERVER_IP="${SERVER_IP:-192.168.1.141}"

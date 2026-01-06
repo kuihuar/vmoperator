@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 安装 Longhorn（适用于单节点或多节点 k3s/k8s 集群）
-# 使用本地修改后的 longhorn_v1.8.1.yaml（已去掉 healthz 探针，适配当前 k3s）
+# 使用本地修改后的 longhorn_v1.8.1.yaml（已恢复 healthz 探针）
 #
 # 使用方法：
 #   1. 使用环境变量指定数据盘路径：
@@ -12,8 +12,7 @@
 #      ./docs/installation/install-longhorn.sh
 #
 # ⚠️  重要提示：
-# - 已去掉 Kubernetes readinessProbe（kubelet 的外部检查）
-# - 但 longhorn-manager 进程内部的 webhook 健康检查无法通过 YAML 配置禁用
+# - 已恢复 Kubernetes readinessProbe（healthz 健康检查）
 # - 如果遇到 "conversion webhook service is not accessible" 错误导致 CrashLoop，
 #   这是 Longhorn v1.8.1 在当前 k3s 环境下的兼容性问题
 # - 建议：如果持续 CrashLoop，考虑使用 k3s 自带的 local-path 存储
@@ -214,7 +213,8 @@ LONGHORN_DATA_PATH="${LONGHORN_DATA_PATH}/"
 
 echo_info "1. 配置 Longhorn 数据存储路径: ${LONGHORN_DATA_PATH}"
 
-sudo chmod 755 ${LONGHORN_DATA_PATH}
+# 尝试设置权限（如果失败会在后续检查中处理）
+sudo chmod 755 "${LONGHORN_DATA_PATH}" 2>/dev/null || true
 
 # ------------------------------------------
 # 2.1 数据盘要求说明
@@ -247,12 +247,29 @@ check_data_disk() {
         echo_info "  ✓ 路径存在"
         
         # 检查写权限
-        if [ ! -w "${path}" ]; then
-            echo_warn "  ✗ 无写权限: ${path}"
-            echo_info "    需要设置写权限: sudo chmod 755 ${path}"
-            issues=$((issues + 1))
+        # 注意：Longhorn Pod 以 root 权限运行，所以检查目录权限是否允许 root（所有者）写入
+        local dir_perms=$(stat -c "%a" "${path}" 2>/dev/null || stat -f "%OLp" "${path}" 2>/dev/null || echo "")
+        if [ -n "${dir_perms}" ]; then
+            # 检查所有者权限（第一位数字）：7 = rwx, 6 = rw-, 5 = r-x
+            # 如果所有者有写权限（>= 6），Longhorn 可以写入
+            local owner_perm="${dir_perms:0:1}"
+            if [ "${owner_perm}" -ge 6 ] 2>/dev/null; then
+                echo_info "  ✓ 目录权限: ${dir_perms}（所有者可写，Longhorn 可以写入）"
+            else
+                echo_warn "  ✗ 目录权限不足: ${dir_perms}（所有者无写权限）"
+                echo_info "    需要设置权限: sudo chmod 755 ${path}"
+                issues=$((issues + 1))
+            fi
         else
-            echo_info "  ✓ 有写权限"
+            # 如果无法获取权限，回退到检查当前用户写权限
+            if [ ! -w "${path}" ]; then
+                echo_warn "  ⚠️  当前用户无写权限: ${path}"
+                echo_info "    如果目录权限是 755 或 777，Longhorn 仍可正常使用（Pod 以 root 运行）"
+                echo_info "    建议检查: ls -ld ${path}"
+                # 不增加 issues，因为 Longhorn Pod 以 root 运行，可能仍然可用
+            else
+                echo_info "  ✓ 有写权限"
+            fi
         fi
         
         # 检查磁盘空间（至少 10GB）
@@ -328,6 +345,126 @@ echo "    3. 添加到 /etc/fstab 实现开机自动挂载（示例）："
 echo "       /dev/sdX ${LONGHORN_DATA_PATH} ext4 defaults,noatime 0 2"
 echo ""
 
+# ------------------------------------------
+# 2.3 自动检测并配置 sdb 磁盘（可选）
+# ------------------------------------------
+echo_info "2.3 检查是否有未使用的磁盘（如 /dev/sdb）..."
+if lsblk /dev/sdb &>/dev/null && [ -z "$(lsblk -n -o MOUNTPOINT /dev/sdb 2>/dev/null | grep -v '^$')" ]; then
+    SDB_SIZE=$(lsblk -b -d -n -o SIZE /dev/sdb 2>/dev/null | awk '{printf "%.1f", $1/1024/1024/1024}')
+    echo_warn "  检测到未挂载的磁盘: /dev/sdb (大小: ${SDB_SIZE}GB)"
+    echo ""
+    echo_info "  是否自动配置 /dev/sdb 作为 Longhorn 数据盘？"
+    echo_warn "  ⚠️  警告：这将执行以下操作："
+    echo "    1. 格式化 /dev/sdb（会删除磁盘上的所有数据！）"
+    echo "    2. 创建挂载点: ${LONGHORN_DATA_PATH}"
+    echo "    3. 挂载磁盘到: ${LONGHORN_DATA_PATH}"
+    echo "    4. 设置权限: chmod 755"
+    echo "    5. 添加到 /etc/fstab（开机自动挂载）"
+    echo ""
+    read -p "是否自动配置 /dev/sdb？(y/n，默认n): " AUTO_SETUP_SDB
+    AUTO_SETUP_SDB=${AUTO_SETUP_SDB:-n}
+    
+    if [[ "${AUTO_SETUP_SDB}" =~ ^[Yy]$ ]]; then
+        echo_info "  开始配置 /dev/sdb..."
+        
+        # 1. 检查磁盘是否已有文件系统
+        if blkid /dev/sdb &>/dev/null; then
+            echo_warn "  ⚠️  /dev/sdb 已有文件系统"
+            read -p "  是否继续格式化（会删除所有数据）？(y/n，默认n): " FORMAT_CONFIRM
+            FORMAT_CONFIRM=${FORMAT_CONFIRM:-n}
+            if [[ ! "${FORMAT_CONFIRM}" =~ ^[Yy]$ ]]; then
+                echo_info "  已取消格式化"
+            else
+                echo_info "  正在格式化 /dev/sdb 为 ext4..."
+                if sudo mkfs.ext4 -F /dev/sdb 2>&1; then
+                    echo_info "  ✓ 格式化完成"
+                else
+                    echo_error "  ✗ 格式化失败"
+                    exit 1
+                fi
+            fi
+        else
+            echo_info "  正在格式化 /dev/sdb 为 ext4..."
+            if sudo mkfs.ext4 -F /dev/sdb 2>&1; then
+                echo_info "  ✓ 格式化完成"
+            else
+                echo_error "  ✗ 格式化失败"
+                exit 1
+            fi
+        fi
+        
+        # 2. 创建挂载点
+        if [ ! -d "${LONGHORN_DATA_PATH}" ]; then
+            echo_info "  创建挂载点: ${LONGHORN_DATA_PATH}"
+            if sudo mkdir -p "${LONGHORN_DATA_PATH}" 2>&1; then
+                echo_info "  ✓ 挂载点已创建"
+            else
+                echo_error "  ✗ 创建挂载点失败"
+                exit 1
+            fi
+        else
+            echo_info "  ✓ 挂载点已存在: ${LONGHORN_DATA_PATH}"
+        fi
+        
+        # 3. 挂载磁盘
+        echo_info "  挂载 /dev/sdb 到 ${LONGHORN_DATA_PATH}..."
+        if sudo mount /dev/sdb "${LONGHORN_DATA_PATH}" 2>&1; then
+            echo_info "  ✓ 挂载成功"
+        else
+            echo_error "  ✗ 挂载失败"
+            exit 1
+        fi
+        
+        # 4. 设置权限
+        echo_info "  设置权限: chmod 755"
+        if sudo chmod 755 "${LONGHORN_DATA_PATH}" 2>&1; then
+            echo_info "  ✓ 权限已设置"
+        else
+            echo_warn "  ⚠️  设置权限失败（继续）"
+        fi
+        
+        # 5. 添加到 /etc/fstab（如果还没有）
+        if ! grep -q "^/dev/sdb.*${LONGHORN_DATA_PATH}" /etc/fstab 2>/dev/null; then
+            echo_info "  添加到 /etc/fstab（开机自动挂载）..."
+            # 获取 UUID（更可靠）
+            SDB_UUID=$(sudo blkid -s UUID -o value /dev/sdb 2>/dev/null)
+            if [ -n "${SDB_UUID}" ]; then
+                FSTAB_ENTRY="UUID=${SDB_UUID} ${LONGHORN_DATA_PATH} ext4 defaults,noatime 0 2"
+            else
+                FSTAB_ENTRY="/dev/sdb ${LONGHORN_DATA_PATH} ext4 defaults,noatime 0 2"
+            fi
+            
+            echo "${FSTAB_ENTRY}" | sudo tee -a /etc/fstab > /dev/null
+            if [ $? -eq 0 ]; then
+                echo_info "  ✓ 已添加到 /etc/fstab"
+                echo_info "    内容: ${FSTAB_ENTRY}"
+            else
+                echo_warn "  ⚠️  添加到 /etc/fstab 失败（需要手动添加）"
+            fi
+        else
+            echo_info "  ✓ /dev/sdb 已在 /etc/fstab 中"
+        fi
+        
+        echo_info "  ✓ /dev/sdb 配置完成"
+        echo ""
+        
+        # 重新检查数据盘
+        echo_info "重新检查数据盘..."
+        check_data_disk "${LONGHORN_DATA_PATH}"
+        DISK_CHECK_RESULT=$?
+    else
+        echo_info "  跳过自动配置 /dev/sdb"
+    fi
+else
+    if ! lsblk /dev/sdb &>/dev/null; then
+        echo_info "  ✓ 未检测到 /dev/sdb 磁盘"
+    else
+        echo_info "  ✓ /dev/sdb 已挂载: $(lsblk -n -o MOUNTPOINT /dev/sdb 2>/dev/null)"
+    fi
+fi
+
+echo ""
+
 if [ ${DISK_CHECK_RESULT} -gt 0 ]; then
     echo_warn "数据盘检查仍有问题，是否继续安装？"
     read -p "继续安装？(y/n，默认n): " CONTINUE
@@ -351,7 +488,7 @@ if [ ! -f "${LONGHORN_YAML}" ]; then
 fi
 
 echo_info "2. 使用本地 YAML 文件: ${LONGHORN_YAML}"
-echo_info "  - 已去掉 healthz 探针（适配当前 k3s）"
+echo_info "  - 已恢复 healthz 探针（readinessProbe）"
 echo_info "  - 已优化 driver-deployer init 容器（添加超时机制，避免无限等待）"
 
 # ------------------------------------------
@@ -365,15 +502,20 @@ echo_info "3. 准备安装配置（数据盘路径: ${LONGHORN_DATA_PATH}）..."
 # 2. 然后恢复 mountPath（容器内路径必须保持 /var/lib/longhorn/）
 # 这样可以确保只替换 hostPath 中的 path，而不影响 mountPath
 
-# 第一步：替换所有 path: /var/lib/longhorn/
+# 第一步：替换所有 path: /var/lib/longhorn/（hostPath）
+# 第二步：替换 default-data-path（如果有的话）
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS 使用 BSD sed
     sed "s|path: /var/lib/longhorn/|path: ${LONGHORN_DATA_PATH}|g" "${LONGHORN_YAML}" > "${TEMP_YAML}"
+    # 替换 default-data-path（在 ConfigMap 中）
+    sed -i '' "s|default-data-path: /var/lib/longhorn|default-data-path: ${LONGHORN_DATA_PATH%/}|g" "${TEMP_YAML}" 2>/dev/null || true
     # 恢复 mountPath（容器内路径必须保持 /var/lib/longhorn/）
     sed -i '' "s|mountPath: ${LONGHORN_DATA_PATH}|mountPath: /var/lib/longhorn/|g" "${TEMP_YAML}" 2>/dev/null || true
 else
     # Linux 使用 GNU sed
     sed "s|path: /var/lib/longhorn/|path: ${LONGHORN_DATA_PATH}|g" "${LONGHORN_YAML}" > "${TEMP_YAML}"
+    # 替换 default-data-path（在 ConfigMap 中）
+    sed -i.bak "s|default-data-path: /var/lib/longhorn|default-data-path: ${LONGHORN_DATA_PATH%/}|g" "${TEMP_YAML}" 2>/dev/null || true
     # 恢复 mountPath（容器内路径必须保持 /var/lib/longhorn/）
     sed -i.bak "s|mountPath: ${LONGHORN_DATA_PATH}|mountPath: /var/lib/longhorn/|g" "${TEMP_YAML}" 2>/dev/null || true
     rm -f "${TEMP_YAML}.bak" 2>/dev/null || true
@@ -443,7 +585,7 @@ fi
 # 5. 安装 Longhorn
 # ------------------------------------------
 echo ""
-echo_info "4. 安装 Longhorn（版本: v1.8.1，已适配 k3s，已去掉 healthz 探针）..."
+echo_info "4. 安装 Longhorn（版本: v1.8.1，已适配 k3s，已恢复 healthz 探针）..."
 
 if kubectl apply -f "${TEMP_YAML}" 2>&1; then
     echo_info "  ✓ Longhorn manifest 已应用"
@@ -469,6 +611,32 @@ kubectl wait --for=condition=Ready pod -l app=longhorn-manager -n longhorn-syste
 echo ""
 echo_info "当前 Longhorn Pod 状态："
 kubectl get pods -n longhorn-system
+
+# ------------------------------------------
+# 6.1 更新 Longhorn default-data-path 设置
+# ------------------------------------------
+echo ""
+echo_info "5.1 更新 Longhorn 数据路径设置..."
+sleep 5  # 等待 Longhorn manager 完全启动
+
+# 检查 default-data-path 设置是否存在
+if kubectl get settings.longhorn.io default-data-path -n longhorn-system &>/dev/null; then
+    CURRENT_PATH=$(kubectl get settings.longhorn.io default-data-path -n longhorn-system -o jsonpath='{.value}' 2>/dev/null || echo "")
+    if [ "${CURRENT_PATH}" != "${LONGHORN_DATA_PATH%/}" ]; then
+        echo_info "  当前 default-data-path: ${CURRENT_PATH}"
+        echo_info "  更新为: ${LONGHORN_DATA_PATH%/}"
+        if kubectl patch settings.longhorn.io default-data-path -n longhorn-system \
+            --type='merge' -p "{\"value\":\"${LONGHORN_DATA_PATH%/}\"}" 2>&1; then
+            echo_info "  ✓ default-data-path 已更新"
+        else
+            echo_warn "  ⚠️  更新 default-data-path 失败，可能需要手动更新"
+        fi
+    else
+        echo_info "  ✓ default-data-path 已正确配置: ${LONGHORN_DATA_PATH%/}"
+    fi
+else
+    echo_warn "  ⚠️  default-data-path 设置不存在，等待 Longhorn 完全启动..."
+fi
 
 # ------------------------------------------
 # 7. 检查 / 创建 StorageClass
@@ -523,7 +691,7 @@ echo_info "=========================================="
 echo ""
 echo_info "配置信息："
 echo "  - 数据存储路径: ${LONGHORN_DATA_PATH}"
-echo "  - 已去掉 healthz 探针（适配当前 k3s）"
+echo "  - 已恢复 healthz 探针（readinessProbe）"
 echo ""
 echo_info "常用后续操作："
 echo "  1. 访问 Longhorn UI:"
