@@ -230,8 +230,10 @@ spec:
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     type:
-                      description: 'Type is the network type: bridge, macvlan, sriov,
-                        or ovs'
+                      description: |-
+                        Type is the network type: bridge, macvlan, sriov, or ovs
+                        For "default" network, this field is optional (uses Pod network)
+                        For other networks, this field is required
                       enum:
                       - bridge
                       - macvlan
@@ -245,7 +247,6 @@ spec:
                       type: integer
                   required:
                   - name
-                  - type
                   type: object
                 type: array
               osImage:

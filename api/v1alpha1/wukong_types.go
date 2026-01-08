@@ -81,9 +81,11 @@ type NetworkConfig struct {
 	Name string `json:"name"`
 
 	// Type is the network type: bridge, macvlan, sriov, or ovs
+	// For "default" network, this field is optional (uses Pod network)
+	// For other networks, this field is required
 	// +kubebuilder:validation:Enum=bridge;macvlan;sriov;ovs
-	// +required
-	Type string `json:"type"`
+	// +optional
+	Type string `json:"type,omitempty"`
 
 	// NADName is the name of an existing NetworkAttachmentDefinition
 	// If empty, the operator will create a new NAD

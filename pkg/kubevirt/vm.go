@@ -2,7 +2,6 @@ package kubevirt
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -177,15 +176,6 @@ func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, n
 		template.Spec.NodeSelector = nil
 	}
 
-	// 在开发环境（单节点）中，如果没有配置 tolerations，添加默认的 toleration
-	// 允许在 control-plane 节点上调度（仅当没有配置 HighAvailability 时）
-	if vmp.Spec.HighAvailability == nil || len(vmp.Spec.HighAvailability.Tolerations) == 0 {
-		// 添加容忍 control-plane taint（如果存在）
-		// 注意：虽然节点没有 taint，但某些 KubeVirt 配置可能要求这个
-		// 这里先不添加，因为节点确实没有 taint
-		// 如果问题仍然存在，可能需要检查 KubeVirt 的配置
-	}
-
 	spec := kubevirtv1.VirtualMachineSpec{
 		Running:  &autoStart,
 		Template: template,
@@ -193,7 +183,6 @@ func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, n
 
 	return spec
 }
-
 
 // buildDisks 构建磁盘设备列表
 func buildDisks(volumes []vmv1alpha1.VolumeStatus) []kubevirtv1.Disk {
@@ -307,14 +296,11 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 			// 使用提供的密码哈希（推荐）
 			cloudInit += fmt.Sprintf("    passwd: %s\n", user.PasswordHash)
 		} else if user.Password != "" {
-			// 使用明文密码（不推荐）
-			// 注意：cloud-init 的 passwd 字段需要密码哈希格式（如 $6$...）
-			// 明文密码可能不会工作，强烈建议使用 passwordHash
+			// 使用明文密码（不推荐，可能不工作）
+			// cloud-init 的 passwd 字段需要密码哈希格式（如 $6$...）
 			// 生成密码哈希: echo -n "password" | openssl passwd -1 -stdin
 			// 或: python3 -c "import crypt; print(crypt.crypt('password', crypt.mksalt(crypt.METHOD_SHA512)))"
 			logger.Info("Using plain text password, cloud-init may not work correctly. Please use passwordHash instead", "user", user.Name)
-			// 尝试使用明文（某些 cloud-init 版本可能支持，但不保证）
-			// 如果密码无法工作，请使用 passwordHash
 			cloudInit += fmt.Sprintf("    passwd: %s\n", user.Password)
 		}
 
@@ -407,14 +393,14 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 			if net.Name == "default" {
 				continue
 			}
-			
+
 			// 检查是否有 NADName（Multus 网络必须有 NADName）
 			netStatus, hasStatus := netStatusMap[net.Name]
 			if hasStatus && netStatus.NADName == "" {
 				// 如果没有 NADName，说明不是 Multus 网络，跳过
 				continue
 			}
-			
+
 			// 如果没有 netStatus，但网络配置了静态 IP，也尝试生成配置
 			// 这可能是首次创建时的情况
 
@@ -425,40 +411,68 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 				hasNetworkConfig = true
 			}
 
-			// 对于 Multus 网络，尝试从现有 VMI 获取 MAC 地址
-			// 如果 VMI 已存在，可以从其状态中获取 MAC 地址
+			// 对于 Multus 网络，尝试获取 MAC 地址和接口名称
+			// MAC 地址匹配是最可靠的方式，适用于所有 Linux 发行版和不同的接口命名规则
 			macAddress := ""
-			if hasStatus && netStatus.MACAddress != "" {
-				macAddress = netStatus.MACAddress
-			} else if hasStatus && netStatus.NADName != "" {
-				// 尝试从现有 VMI 获取 MAC 地址
+			interfaceName := ""
+
+			// 优先使用 NetworkStatus 中的信息
+			if hasStatus {
+				if netStatus.MACAddress != "" {
+					macAddress = netStatus.MACAddress
+				}
+				if netStatus.Interface != "" {
+					interfaceName = netStatus.Interface
+				}
+			}
+
+			// 如果 NetworkStatus 中没有 MAC 地址，尝试从现有 VMI 获取
+			if macAddress == "" && hasStatus && netStatus.NADName != "" {
 				vmiName := fmt.Sprintf("%s-vm", vmp.Name)
 				vmi := &kubevirtv1.VirtualMachineInstance{}
 				key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmiName}
 				if err := c.Get(ctx, key, vmi); err == nil {
 					// 查找对应的接口 MAC 地址
+					// 注意：VMI 接口的 Name 是网络名称（net.Name），不是 NAD 名称
 					for _, iface := range vmi.Status.Interfaces {
-						if iface.Name == netStatus.NADName && iface.MAC != "" {
-							macAddress = iface.MAC
+						if iface.Name == net.Name {
+							if iface.MAC != "" {
+								macAddress = iface.MAC
+							}
 							break
 						}
 					}
 				}
 			}
 
-			// 生成接口名称（enp2s0, enp3s0 等）
-			interfaceName := fmt.Sprintf("enp%ds0", multusInterfaceIndex+1)
-			
-			// 使用 MAC 地址匹配接口（最可靠）
+			// 生成网络配置
+			// 最佳实践：优先使用 MAC 地址匹配，不依赖硬编码的接口名称
 			if macAddress != "" {
-				// 使用 MAC 地址匹配
-				cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
-				cloudInit += fmt.Sprintf("      match:\n")
-				cloudInit += fmt.Sprintf("        macaddress: %s\n", macAddress)
-				cloudInit += fmt.Sprintf("      set-name: %s\n", interfaceName)
+				// 使用 MAC 地址匹配（最可靠，适用于所有 Linux 发行版）
+				// 如果 NetworkStatus 中有接口名称，使用它；否则让 Netplan 自动检测
+				if interfaceName != "" {
+					// 使用 NetworkStatus 中提供的接口名称
+					cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
+					cloudInit += fmt.Sprintf("      match:\n")
+					cloudInit += fmt.Sprintf("        macaddress: %s\n", macAddress)
+					cloudInit += fmt.Sprintf("      set-name: %s\n", interfaceName)
+				} else {
+					// 只使用 MAC 地址匹配，不设置接口名称（让系统自动分配）
+					// 使用一个临时名称作为配置键，Netplan 会根据 MAC 地址匹配到实际接口
+					tempInterfaceName := fmt.Sprintf("eth%d", multusInterfaceIndex)
+					cloudInit += fmt.Sprintf("    %s:\n", tempInterfaceName)
+					cloudInit += fmt.Sprintf("      match:\n")
+					cloudInit += fmt.Sprintf("        macaddress: %s\n", macAddress)
+					// 不设置 set-name，让系统使用默认的接口名称（enp2s0, eth1, ens3 等）
+				}
 			} else {
-				// 如果 MAC 地址不可用，直接使用接口名称
-				// 对于 Multus 网络，通常是第二个接口（enp2s0）
+				// 如果没有 MAC 地址，这是一个警告情况
+				// 这种情况下，我们无法可靠地配置网络，因为接口名称在不同系统上可能不同
+				logger.V(1).Info("MAC address not available for network, network configuration may not work correctly", "network", net.Name)
+				// 如果 NetworkStatus 中有接口名称，使用它；否则使用通用名称（可能不工作）
+				if interfaceName == "" {
+					interfaceName = fmt.Sprintf("eth%d", multusInterfaceIndex)
+				}
 				cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
 			}
 

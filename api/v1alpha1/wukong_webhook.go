@@ -135,8 +135,14 @@ func (r *Wukong) ValidateCreate(ctx context.Context, obj runtime.Object) (admiss
 		if net.Name == "" {
 			return nil, fmt.Errorf("network[%d].name is required", i)
 		}
+		// default 网络使用 Pod 网络，不需要 type 字段
+		if net.Name == "default" {
+			// default 网络不需要 type，代码会自动使用 Pod 网络
+			continue
+		}
+		// 非 default 网络必须指定 type
 		if net.Type == "" {
-			return nil, fmt.Errorf("network[%d].type is required", i)
+			return nil, fmt.Errorf("network[%d].type is required (default network does not need type)", i)
 		}
 		// 验证网络类型
 		validTypes := map[string]bool{

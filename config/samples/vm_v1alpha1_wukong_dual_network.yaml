@@ -13,7 +13,7 @@ spec:
   disks:
     # 系统盘
     - name: system
-      size: 20Gi
+      size: 5Gi
       storageClassName: longhorn
       boot: true
       # 使用 HTTP 源下载镜像
@@ -21,13 +21,14 @@ spec:
     
     # 数据盘
     - name: data
-      size: 50Gi
+      size: 10Gi
       storageClassName: longhorn
       boot: false
   
   # 网络配置：管理网络 + 外网网络
   networks:
     # 1. 默认网络（Pod 网络，用于集群内访问）
+    # 注意：default 网络不需要 type 字段，代码会自动使用 Pod 网络（masquerade）
     - name: default
     
     # 2. 管理网络（Bridge + NMState，固定 IP）

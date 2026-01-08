@@ -81,10 +81,10 @@ func checkNMStateCRDExists(ctx context.Context, c client.Client) (bool, error) {
 // reconcileBridgePolicy 创建/更新桥接网络策略
 func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, netCfg *vmv1alpha1.NetworkConfig) error {
 	logger := log.FromContext(ctx)
-	
+
 	// 生成策略名称
 	policyName := fmt.Sprintf("%s-%s-bridge", vmp.Name, netCfg.Name)
-	
+
 	// 确定桥接名称
 	bridgeName := netCfg.BridgeName
 	if bridgeName == "" {
@@ -126,7 +126,7 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 			"state": "up",
 			"vlan": map[string]interface{}{
 				"base-iface": physicalInterface,
-				"id":          *netCfg.VLANID,
+				"id":         *netCfg.VLANID,
 			},
 		}
 		interfaces = append(interfaces, vlanInterface)
