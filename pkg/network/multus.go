@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -28,6 +29,25 @@ func ReconcileNetworks(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wuk
 	statuses := make([]vmv1alpha1.NetworkStatus, 0, len(vmp.Spec.Networks))
 
 	for _, netCfg := range vmp.Spec.Networks {
+		// 跳过 default 网络，它使用 Pod 网络，不需要 Multus NAD
+		if netCfg.Name == "default" {
+			statuses = append(statuses, vmv1alpha1.NetworkStatus{
+				Name: netCfg.Name,
+				// 不设置 NADName，表示使用默认 Pod 网络
+			})
+			continue
+		}
+
+		// 只支持 bridge 和 ovs 类型（根据 KubeVirt 官方文档，macvlan/ipvlan 不支持）
+		if netCfg.Type != "bridge" && netCfg.Type != "ovs" {
+			logger.Info("Skipping unsupported network type", "network", netCfg.Name, "type", netCfg.Type, "reason", "only bridge and ovs are supported for KubeVirt")
+			statuses = append(statuses, vmv1alpha1.NetworkStatus{
+				Name: netCfg.Name,
+				// 不设置 NADName，表示不支持
+			})
+			continue
+		}
+
 		// 如果用户已经指定了 NADName，则只记录状态，不自动创建
 		nadName := netCfg.NADName
 		if nadName == "" {
@@ -108,7 +128,7 @@ func ReconcileNetworks(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wuk
 // checkMultusCRDExists 检查 Multus NetworkAttachmentDefinition CRD 是否存在
 func checkMultusCRDExists(ctx context.Context, c client.Client) (bool, error) {
 	crd := &apiextensionsv1.CustomResourceDefinition{}
-	key := client.ObjectKey{Name: "networkattachmentdefinitions.k8s.cni.cncf.io"}
+	key := client.ObjectKey{Name: "network-attachment-definitions.k8s.cni.cncf.io"}
 	err := c.Get(ctx, key, crd)
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -126,34 +146,42 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 		CNIVersion string                 `json:"cniVersion"`
 		Type       string                 `json:"type"`
 		Bridge     string                 `json:"bridge,omitempty"`
+		Master     string                 `json:"master,omitempty"`
+		Mode       string                 `json:"mode,omitempty"`
 		VLAN       *int                   `json:"vlan,omitempty"`
 		IPAM       map[string]interface{} `json:"ipam,omitempty"`
 	}
 
+	// 只支持 bridge 类型（根据 KubeVirt 官方文档，macvlan/ipvlan 不能用于 bridge interfaces）
+	// 参考：https://kubevirt.io/user-guide/network/interfaces_and_networks/#invalid-cnis-for-secondary-networks
+	if netCfg.Type != "bridge" && netCfg.Type != "ovs" {
+		return "", fmt.Errorf("unsupported network type: %s. Only bridge and ovs are supported for KubeVirt", netCfg.Type)
+	}
+
+	// 强制使用 bridge CNI
 	cfg := baseConfig{
 		CNIVersion: "0.3.1",
-		Type:       netCfg.Type,
+		Type:       "bridge", // 强制使用 bridge CNI
 	}
 
-	// 对 bridge/ovs 类型，使用 bridge 字段和可选 VLAN
-	if netCfg.Type == "bridge" || netCfg.Type == "ovs" {
-		if netCfg.BridgeName != "" {
-			cfg.Bridge = netCfg.BridgeName
-		} else {
-			cfg.Bridge = fmt.Sprintf("br-%s", netCfg.Name)
-		}
-		if netCfg.VLANID != nil {
-			cfg.VLAN = netCfg.VLANID
-		}
+	// 配置桥接名称
+	if netCfg.BridgeName != "" {
+		cfg.Bridge = netCfg.BridgeName
+	} else {
+		// 默认桥接名称，与 NMState 创建的桥接名称保持一致
+		cfg.Bridge = fmt.Sprintf("br-%s", netCfg.Name)
 	}
+	// 注意：VLAN 由 NMState 处理，这里不需要设置 VLAN
+	// 如果设置了 VLAN，NMState 会创建 VLAN 接口，桥接会使用 VLAN 接口
 
-	// 简单根据 IPConfig 选择 ipam 类型
+	// 根据 IPConfig 选择 ipam 类型
 	if netCfg.IPConfig != nil {
 		if netCfg.IPConfig.Mode == "dhcp" {
 			cfg.IPAM = map[string]interface{}{
 				"type": "dhcp",
 			}
 		} else if netCfg.IPConfig.Mode == "static" && netCfg.IPConfig.Address != nil {
+			// bridge CNI 使用 static IPAM
 			cfg.IPAM = map[string]interface{}{
 				"type": "static",
 				"addresses": []map[string]string{
@@ -168,6 +196,11 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 						"dst": "0.0.0.0/0",
 						"gw":  *netCfg.IPConfig.Gateway,
 					},
+				}
+			}
+			if len(netCfg.IPConfig.DNSServers) > 0 {
+				cfg.IPAM["dns"] = map[string]interface{}{
+					"nameservers": netCfg.IPConfig.DNSServers,
 				}
 			}
 		}

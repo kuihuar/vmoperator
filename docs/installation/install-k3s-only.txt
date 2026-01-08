@@ -63,3 +63,13 @@ go version go1.24.9
  1563  sudo systemctl stop openvpn.service
  1564  sudo systemctl disable --now openvpn.service
  1565  sudo systemctl status openvpn.service
+
+
+
+
+ kubectl get configmap coredns -n kube-system -o yaml | sed 's|forward \. /etc/resolv.conf|forward . 114.114.114.114 8.8.8.8 223.5.5.5|' | kubectl apply -f -
+ kubectl delete pod -n kube-system -l k8s-app=kube-dns
+kubectl logs -n kube-system -l k8s-app=kube-dns --tail=20 2>&1 | tail -10
+
+ kubectl run -it --rm --restart=Never --image=busybox:1.28 test-dns -- \
+  nslookup kubernetes.default

@@ -30,7 +30,7 @@ spec:
   # Cloud-Init 用户配置
   cloudInitUser:
     name: ubuntu
-    passwordHash: "$1$7.t8q8zZ$59I1IiMXy5w3gIl5Yrn/4/"  # 替换为实际生成的哈希
+    passwordHash: "$1$7.t8q8zZ$59I1IiMXy5w3gIl5Yrn/4/"  # 替换为实际生成的哈希 ubuntu123
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     shell: "/bin/bash"
     groups:

@@ -1,0 +1,43 @@
+# NetworkAttachmentDefinition for external network access using macvlan
+# 使用 macvlan 实现外网访问的 NetworkAttachmentDefinition
+#
+# 使用方法：
+# 1. 先创建这个 NAD: kubectl apply -f macvlan-external-nad.yaml
+# 2. 在 Wukong 配置中引用: nadName: "macvlan-external-nad"
+#
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: macvlan-external-nad
+  namespace: default
+spec:
+  config: |-
+    {
+      "cniVersion": "0.3.1",
+      "type": "macvlan",
+      "master": "ens160",
+      "mode": "bridge",
+      "ipam": {
+        "type": "host-local",
+        "ranges": [
+          [
+            {
+              "subnet": "192.168.1.0/24",
+              "rangeStart": "192.168.1.200",
+              "rangeEnd": "192.168.1.250",
+              "gateway": "192.168.1.1"
+            }
+          ]
+        ],
+        "routes": [
+          {
+            "dst": "0.0.0.0/0",
+            "gw": "192.168.1.1"
+          }
+        ],
+        "dns": {
+          "nameservers": ["192.168.1.1", "114.114.114.114"]
+        }
+      }
+    }
+

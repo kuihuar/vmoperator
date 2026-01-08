@@ -1,0 +1,41 @@
+## coredns
+
+
+
+
+ kubectl get configmap coredns -n kube-system -o yaml | sed 's|forward \. /etc/resolv.conf|forward . 114.114.114.114 8.8.8.8 223.5.5.5|' | kubectl apply -f -
+ kubectl delete pod -n kube-system -l k8s-app=kube-dns
+kubectl logs -n kube-system -l k8s-app=kube-dns --tail=20 2>&1 | tail -10
+
+ kubectl run -it --rm --restart=Never --image=busybox:1.28 test-dns -- \
+  nslookup kubernetes.default
+
+### longhorn
+
+1. PVC 事件中的错误信息
+从 kubectl describe pvc 可以看到：
+admission webhook "validator.longhorn.io" denied the request: failed to get backup target default: backuptarget.longhorn.io "default" not found
+2. Longhorn Manager 日志
+从日志可以看到创建流程：
+Mutator 自动设置 backupTargetName：
+   "op": "replace", "path": "/spec/backupTargetName", "value": "default"
+Validator 验证时失败：
+   error="failed to get backup target default: backuptarget.longhorn.io \"default\" not found"
+错误来源：admission webhook "validator.longhorn.io" 在验证 Volume 创建时，会检查 BackupTarget 是否存在。
+3. 确认结论
+创建 PVC 时，Longhorn 的 admission webhook 会验证 Volume 资源
+即使不使用备份，Longhorn 也会自动设置 backupTargetName: "default"
+验证时会检查名为 default 的 BackupTarget 资源是否存在
+当前集群中没有 backuptarget.longhorn.io "default" 资源，导致验证失败
+
+
+解决方法：
+at <<'EOF' | kubectl apply -f -
+apiVersion: longhorn.io/v1beta2
+kind: BackupTarget
+metadata:
+  name: default
+  namespace: longhorn-system
+spec:
+  backupTargetURL: ""
+EOF

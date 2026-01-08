@@ -88,11 +88,9 @@ func buildVirtualMachine(ctx context.Context, c client.Client, vmp *vmv1alpha1.W
 		}
 	}
 
-	// 构建 annotations（用于 Multus 网络）
-	annotations := buildNetworkAnnotations(networks)
-	if len(annotations) > 0 {
-		vm.Annotations = annotations
-	}
+	// 注意：对于 Multus 网络，KubeVirt 会根据 VM spec 中的 multus 配置自动处理
+	// 不需要手动添加 k8s.v1.cni.cncf.io/networks annotation
+	// KubeVirt 会自动在 Pod 上添加正确的 Multus annotation
 
 	return vm
 }
@@ -115,7 +113,8 @@ func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, n
 	// 构建 template
 	template := &kubevirtv1.VirtualMachineInstanceTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{
-			Annotations: buildNetworkAnnotations(networks),
+			// 注意：KubeVirt 会自动处理 Multus 网络，不需要手动添加 annotation
+			// 只需要在 networks 和 interfaces 中正确配置即可
 		},
 		Spec: kubevirtv1.VirtualMachineInstanceSpec{
 			Domain: kubevirtv1.DomainSpec{
@@ -137,7 +136,7 @@ func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, n
 
 	// 添加 Cloud-Init 配置（如果有）
 	if vmp.Spec.OSImage != "" || vmp.Spec.SSHKeySecret != "" || vmp.Spec.CloudInitUser != nil {
-		cloudInitData := buildCloudInitData(ctx, c, vmp)
+		cloudInitData := buildCloudInitData(ctx, c, vmp, networks)
 		if cloudInitData != "" {
 			// 添加 cloudInitNoCloud volume
 			cloudInitVolume := kubevirtv1.Volume{
@@ -195,33 +194,6 @@ func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, n
 	return spec
 }
 
-// buildNetworkAnnotations 构建 Multus 网络注解
-func buildNetworkAnnotations(networks []vmv1alpha1.NetworkStatus) map[string]string {
-	if len(networks) == 0 {
-		return nil
-	}
-
-	annotations := make(map[string]string)
-	netList := make([]map[string]string, 0, len(networks))
-
-	for i, net := range networks {
-		if net.NADName != "" {
-			netList = append(netList, map[string]string{
-				"name":      net.NADName,
-				"interface": fmt.Sprintf("net%d", i+1),
-			})
-		}
-	}
-
-	if len(netList) > 0 {
-		netJSON, err := json.Marshal(netList)
-		if err == nil {
-			annotations["k8s.v1.cni.cncf.io/networks"] = string(netJSON)
-		}
-	}
-
-	return annotations
-}
 
 // buildDisks 构建磁盘设备列表
 func buildDisks(volumes []vmv1alpha1.VolumeStatus) []kubevirtv1.Disk {
@@ -253,13 +225,15 @@ func buildNetworks(networks []vmv1alpha1.NetworkStatus) []kubevirtv1.Network {
 	})
 
 	// Multus 网络
+	// 注意：Network 的 Name 必须与 Interface 的 Name 匹配（KubeVirt 要求）
+	// NetworkName 用于引用 NetworkAttachmentDefinition
 	for _, net := range networks {
 		if net.NADName != "" {
 			netList = append(netList, kubevirtv1.Network{
-				Name: net.NADName,
+				Name: net.Name, // 使用网络配置中的名称，与 Interface 匹配
 				NetworkSource: kubevirtv1.NetworkSource{
 					Multus: &kubevirtv1.MultusNetwork{
-						NetworkName: net.NADName,
+						NetworkName: net.NADName, // NAD 名称用于 Multus 引用
 					},
 				},
 			})
@@ -283,16 +257,15 @@ func buildInterfaces(networks []vmv1alpha1.NetworkStatus) []kubevirtv1.Interface
 	})
 
 	// Multus 网络接口
-	for i, net := range networks {
+	// 注意：Interface 的 Name 必须与 Network 的 Name 匹配（KubeVirt 要求）
+	for _, net := range networks {
 		if net.NADName != "" {
 			interfaceList = append(interfaceList, kubevirtv1.Interface{
-				Name: net.NADName,
+				Name: net.Name, // 使用网络配置中的名称，与 Network 匹配
 				InterfaceBindingMethod: kubevirtv1.InterfaceBindingMethod{
-					Bridge: &kubevirtv1.InterfaceBridge{},
+					Bridge: &kubevirtv1.InterfaceBridge{}, // 对于 bridge CNI 使用 Bridge binding
 				},
 			})
-			// 如果这是第一个 Multus 网络，也可以使用 SR-IOV 或其他类型
-			_ = i // 占位，后续可以根据配置选择不同的接口类型
 		}
 	}
 
@@ -319,7 +292,7 @@ func buildVolumes(volumes []vmv1alpha1.VolumeStatus) []kubevirtv1.Volume {
 }
 
 // buildCloudInitData 构建 Cloud-Init 用户数据
-func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong) string {
+func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkStatus) string {
 	logger := log.FromContext(ctx)
 	cloudInit := "#cloud-config\n"
 
@@ -420,16 +393,75 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 	}
 
 	// 配置网络（如果有静态 IP）
+	// 创建网络名称到 NetworkStatus 的映射，以便获取 MAC 地址
+	netStatusMap := make(map[string]vmv1alpha1.NetworkStatus)
+	for _, netStatus := range networks {
+		netStatusMap[netStatus.Name] = netStatus
+	}
+
 	hasNetworkConfig := false
+	multusInterfaceIndex := 1 // 用于跟踪 Multus 接口的索引（从 1 开始，因为 0 是 default）
 	for _, net := range vmp.Spec.Networks {
 		if net.IPConfig != nil && net.IPConfig.Mode == "static" && net.IPConfig.Address != nil {
+			// 跳过 default 网络（它使用 Pod 网络，不需要静态 IP 配置）
+			if net.Name == "default" {
+				continue
+			}
+			
+			// 检查是否有 NADName（Multus 网络必须有 NADName）
+			netStatus, hasStatus := netStatusMap[net.Name]
+			if hasStatus && netStatus.NADName == "" {
+				// 如果没有 NADName，说明不是 Multus 网络，跳过
+				continue
+			}
+			
+			// 如果没有 netStatus，但网络配置了静态 IP，也尝试生成配置
+			// 这可能是首次创建时的情况
+
 			if !hasNetworkConfig {
 				cloudInit += "\nnetwork:\n"
 				cloudInit += "  version: 2\n"
 				cloudInit += "  ethernets:\n"
 				hasNetworkConfig = true
 			}
-			cloudInit += fmt.Sprintf("    %s:\n", net.Name)
+
+			// 对于 Multus 网络，尝试从现有 VMI 获取 MAC 地址
+			// 如果 VMI 已存在，可以从其状态中获取 MAC 地址
+			macAddress := ""
+			if hasStatus && netStatus.MACAddress != "" {
+				macAddress = netStatus.MACAddress
+			} else if hasStatus && netStatus.NADName != "" {
+				// 尝试从现有 VMI 获取 MAC 地址
+				vmiName := fmt.Sprintf("%s-vm", vmp.Name)
+				vmi := &kubevirtv1.VirtualMachineInstance{}
+				key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmiName}
+				if err := c.Get(ctx, key, vmi); err == nil {
+					// 查找对应的接口 MAC 地址
+					for _, iface := range vmi.Status.Interfaces {
+						if iface.Name == netStatus.NADName && iface.MAC != "" {
+							macAddress = iface.MAC
+							break
+						}
+					}
+				}
+			}
+
+			// 生成接口名称（enp2s0, enp3s0 等）
+			interfaceName := fmt.Sprintf("enp%ds0", multusInterfaceIndex+1)
+			
+			// 使用 MAC 地址匹配接口（最可靠）
+			if macAddress != "" {
+				// 使用 MAC 地址匹配
+				cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
+				cloudInit += fmt.Sprintf("      match:\n")
+				cloudInit += fmt.Sprintf("        macaddress: %s\n", macAddress)
+				cloudInit += fmt.Sprintf("      set-name: %s\n", interfaceName)
+			} else {
+				// 如果 MAC 地址不可用，直接使用接口名称
+				// 对于 Multus 网络，通常是第二个接口（enp2s0）
+				cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
+			}
+
 			cloudInit += "      addresses:\n"
 			cloudInit += fmt.Sprintf("        - %s\n", *net.IPConfig.Address)
 			if net.IPConfig.Gateway != nil {
@@ -442,6 +474,9 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 					cloudInit += fmt.Sprintf("          - %s\n", dns)
 				}
 			}
+
+			// 增加 Multus 接口索引
+			multusInterfaceIndex++
 		}
 	}
 

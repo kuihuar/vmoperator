@@ -25,6 +25,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -54,6 +55,9 @@ func init() {
 
 	// 注册 KubeVirt 类型到 scheme
 	utilruntime.Must(kubevirtv1.AddToScheme(scheme))
+
+	// 注册 apiextensions 类型到 scheme（用于检查 CRD）
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 
 	// +kubebuilder:scaffold:scheme
 }
