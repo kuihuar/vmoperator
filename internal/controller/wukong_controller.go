@@ -435,11 +435,45 @@ func (r *WukongReconciler) validateSpec(vmp *vmv1alpha1.Wukong) error {
 // syncNetworkStatusFromVMI 从 VMI 同步网络状态（IP 地址等）
 func (r *WukongReconciler) syncNetworkStatusFromVMI(ctx context.Context, vmp *vmv1alpha1.Wukong, vmName string, networks []vmv1alpha1.NetworkStatus) error {
 	logger := log.FromContext(ctx)
-	// 这里可以扩展从 VMI 获取实际的网络接口信息
-	// 目前先返回 nil，后续可以添加从 VMI status.interfaces 获取 IP 地址的逻辑
-	_ = logger
-	_ = vmName
-	_ = networks
+
+	vmi := &kubevirtv1.VirtualMachineInstance{}
+	key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmName}
+	if err := r.Get(ctx, key, vmi); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	// 创建网络名称到索引的映射
+	netMap := make(map[string]int)
+	for i, net := range networks {
+		netMap[net.Name] = i
+	}
+
+	// 从 VMI 状态同步接口信息
+	updated := false
+	for _, iface := range vmi.Status.Interfaces {
+		if idx, ok := netMap[iface.Name]; ok {
+			if networks[idx].MACAddress != iface.MAC {
+				networks[idx].MACAddress = iface.MAC
+				updated = true
+			}
+			if networks[idx].IPAddress != iface.IP {
+				networks[idx].IPAddress = iface.IP
+				updated = true
+			}
+			if networks[idx].Interface != iface.InterfaceName {
+				networks[idx].Interface = iface.InterfaceName
+				updated = true
+			}
+		}
+	}
+
+	if updated {
+		logger.Info("Updated network status from VMI", "vmName", vmName)
+	}
+
 	return nil
 }
 
