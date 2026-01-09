@@ -72,20 +72,21 @@ func ReconcileDataVolume(ctx context.Context, c client.Client, disk vmv1alpha1.D
 		}
 	}
 
-	// 构建 DataVolume spec
-	spec := map[string]interface{}{
-		"source": source,
-		"pvc": map[string]interface{}{
-			// 注意：这里必须使用 []interface{}，否则在 DeepCopy 期间会因为 []string 触发 panic: cannot deep copy []string
-			"accessModes": []interface{}{"ReadWriteOnce"},
-			"resources": map[string]interface{}{
-				"requests": map[string]interface{}{
-					"storage": disk.Size,
+		// 构建 DataVolume spec
+		spec := map[string]interface{}{
+			"source": source,
+			"pvc": map[string]interface{}{
+				// 注意：这里必须使用 []interface{}，否则在 DeepCopy 期间会因为 []string 触发 panic: cannot deep copy []string
+				"accessModes": []interface{}{"ReadWriteOnce"},
+				"resources": map[string]interface{}{
+					"requests": map[string]interface{}{
+						"storage": disk.Size,
+					},
 				},
+				"storageClassName": disk.StorageClassName,
+				"volumeMode":       "Filesystem", // 明确指定 volumeMode
 			},
-			"storageClassName": disk.StorageClassName,
-		},
-	}
+		}
 
 	if err := unstructured.SetNestedField(dv.Object, spec, "spec"); err != nil {
 		logger.Error(err, "failed to set DataVolume spec")
