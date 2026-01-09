@@ -91,12 +91,10 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 		bridgeName = fmt.Sprintf("br-%s", netCfg.Name)
 	}
 
-	// 确定物理网卡（如果没有指定，使用默认值）
-	// 注意：这里假设使用 ens160，实际应该从配置或环境变量获取
-	physicalInterface := "ens160"
-	if netCfg.BridgeName != "" && netCfg.Type != "bridge" {
-		// 如果 BridgeName 被用作物理网卡名称（macvlan 场景）
-		physicalInterface = netCfg.BridgeName
+	// 确定物理网卡（必须明确指定）
+	physicalInterface := netCfg.PhysicalInterface
+	if physicalInterface == "" {
+		return fmt.Errorf("physicalInterface is required for bridge/ovs network type, network: %s", netCfg.Name)
 	}
 
 	// 构建 NodeNetworkConfigurationPolicy
@@ -152,6 +150,9 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 		interfaces = append(interfaces, bridgeInterface)
 	} else {
 		// 没有 VLAN，直接使用物理网卡
+		// 重要：不在 desiredState 中明确指定物理网卡，只将其作为桥接端口
+		// 这样可以避免 NMState 管理物理网卡的 IP 配置，保留现有的 Netplan/NetworkManager 配置
+		// NMState 只需要知道物理网卡作为桥接端口即可，不需要直接管理它
 		bridgeInterface := map[string]interface{}{
 			"name":  bridgeName,
 			"type":  "linux-bridge",
@@ -170,6 +171,8 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 			},
 		}
 		interfaces = append(interfaces, bridgeInterface)
+		// 注意：不在 desiredState 中包含物理网卡的配置，让 Netplan/NetworkManager 继续管理
+		// NMState 只负责创建桥接并将物理网卡作为端口，不会改变物理网卡的 IP 配置
 	}
 
 	desiredState["interfaces"] = interfaces

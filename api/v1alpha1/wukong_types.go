@@ -102,6 +102,12 @@ type NetworkConfig struct {
 	// +optional
 	BridgeName string `json:"bridgeName,omitempty"`
 
+	// PhysicalInterface is the physical network interface name (e.g., "ens160", "ens192")
+	// Used by NMState to create bridge with this interface as a port
+	// Required for bridge and ovs network types
+	// +optional
+	PhysicalInterface string `json:"physicalInterface,omitempty"`
+
 	// IPConfig defines the IP configuration for this network
 	// +optional
 	IPConfig *IPConfigSpec `json:"ipConfig,omitempty"`
