@@ -194,20 +194,27 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 			// 获取子网范围
 			subnet := ipNet.String()
 
-			// 使用 host-local IPAM，设置 rangeStart 和 rangeEnd 为同一个 IP
-			// 这样可以确保分配固定的 IP 地址
-			cfg.IPAM = map[string]interface{}{
-				"type":       "host-local",
-				"subnet":     subnet,
-				"rangeStart": ip.String(),
-				"rangeEnd":   ip.String(),
-			}
+				// 使用 host-local IPAM，设置 rangeStart 和 rangeEnd 为同一个 IP
+				// 这样可以确保分配固定的 IP 地址
+				ipam := map[string]interface{}{
+					"type":       "host-local",
+					"subnet":     subnet,
+					"rangeStart": ip.String(),
+					"rangeEnd":   ip.String(),
+				}
 
-			// 路由和 DNS 配置需要在 CNI 配置的顶层，而不是 IPAM 中
-			// 但 bridge CNI 不支持在配置中直接设置路由和 DNS
-			// 这些应该通过 Cloud-Init 在 VM 内部配置
+				// 如果指定了网关，注入到 IPAM 路由中
+				if netCfg.IPConfig.Gateway != nil {
+					ipam["routes"] = []map[string]interface{}{
+						{
+							"dst": "0.0.0.0/0",
+							"gw":  *netCfg.IPConfig.Gateway,
+						},
+					}
+				}
+				cfg.IPAM = ipam
+			}
 		}
-	}
 
 	data, err := json.Marshal(cfg)
 	if err != nil {

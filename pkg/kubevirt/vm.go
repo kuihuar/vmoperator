@@ -458,21 +458,27 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 					// 这里我们依赖 KubeVirt 默认的接口顺序
 				}
 
-			// 禁用 DHCP，使用静态 IP
-			cloudInit += "      dhcp4: false\n"
-			cloudInit += "      dhcp6: false\n"
-			cloudInit += "      addresses:\n"
-			cloudInit += fmt.Sprintf("        - %s\n", *net.IPConfig.Address)
-			if net.IPConfig.Gateway != nil {
-				cloudInit += fmt.Sprintf("      gateway4: %s\n", *net.IPConfig.Gateway)
-			}
-			if len(net.IPConfig.DNSServers) > 0 {
-				cloudInit += "      nameservers:\n"
-				cloudInit += "        addresses:\n"
-				for _, dns := range net.IPConfig.DNSServers {
-					cloudInit += fmt.Sprintf("          - %s\n", dns)
+				if net.IPConfig.Mode == "static" && net.IPConfig.Address != nil {
+					// 禁用 DHCP，使用静态 IP
+					cloudInit += "      dhcp4: false\n"
+					cloudInit += "      dhcp6: false\n"
+					cloudInit += "      addresses:\n"
+					cloudInit += fmt.Sprintf("        - %s\n", *net.IPConfig.Address)
+					if net.IPConfig.Gateway != nil {
+						cloudInit += fmt.Sprintf("      gateway4: %s\n", *net.IPConfig.Gateway)
+					}
+					if len(net.IPConfig.DNSServers) > 0 {
+						cloudInit += "      nameservers:\n"
+						cloudInit += "        addresses:\n"
+						for _, dns := range net.IPConfig.DNSServers {
+							cloudInit += fmt.Sprintf("          - %s\n", dns)
+						}
+					}
+				} else if net.IPConfig.Mode == "dhcp" {
+					// 启用 DHCP
+					cloudInit += "      dhcp4: true\n"
+					cloudInit += "      dhcp6: false\n"
 				}
-			}
 
 			// 增加 Multus 接口索引
 			multusInterfaceIndex++
