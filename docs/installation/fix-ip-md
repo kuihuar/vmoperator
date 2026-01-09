@@ -1,0 +1,23 @@
+### 先想办法使k3s启动，方法就是给br-management 配置IP
+
+sudo nmcli connection modify br-management ipv4.method manual ipv4.addresses 192.168.1.141/24 ipv4.gateway 192.168.1.1 ipv4.dns "8.8.8.8 8.8.4.4"
+
+
+### 然后把nncp 都删了
+kubectl get nncp
+
+### 然后删bridge
+
+sudo nmcli connection down br-management
+sudo nmcli connection delete br-management
+sudo nmcli connection delete netplan-ens160
+
+最后（或者ubuntu settings 里设置）
+
+# 方法1：使用 nmcli（推荐，与 Settings 兼容）
+sudo nmcli connection add type ethernet ifname ens160 con-name ens160-static ipv4.method manual ipv4.addresses 192.168.1.141/24 ipv4.gateway 192.168.1.1 ipv4.dns "8.8.8.8 8.8.4.4"
+sudo nmcli connection up ens160-static
+
+# 方法2：如果连接已存在，修改现有连接
+sudo nmcli connection modify ens160 ipv4.method manual ipv4.addresses 192.168.1.141/24 ipv4.gateway 192.168.1.1 ipv4.dns "8.8.8.8 8.8.4.4"
+sudo nmcli connection up ens160
