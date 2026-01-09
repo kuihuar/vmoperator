@@ -134,29 +134,17 @@ func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, n
 	}
 
 	// 添加 Cloud-Init 配置（如果有）
-	cloudInitUserData := ""
-	cloudInitNetworkData := ""
-	
-	if vmp.Spec.OSImage != "" || vmp.Spec.SSHKeySecret != "" || vmp.Spec.CloudInitUser != nil {
-		cloudInitUserData = buildCloudInitUserData(ctx, c, vmp)
-	}
-	
-	// 单独构建网络配置，使用 NetworkData 字段（推荐方式）
-	cloudInitNetworkData = buildCloudInitNetworkData(ctx, c, vmp, networks)
-	
-	if cloudInitUserData != "" || cloudInitNetworkData != "" {
+	// 注意：网络配置放在 userData 中，这是 Cloud-Init 的标准方式
+	cloudInitData := buildCloudInitData(ctx, c, vmp, networks)
+	if cloudInitData != "" {
 		// 添加 cloudInitNoCloud volume
 		cloudInitVolume := kubevirtv1.Volume{
 			Name: "cloudinitdisk",
 			VolumeSource: kubevirtv1.VolumeSource{
-				CloudInitNoCloud: &kubevirtv1.CloudInitNoCloudSource{},
+				CloudInitNoCloud: &kubevirtv1.CloudInitNoCloudSource{
+					UserData: cloudInitData,
+				},
 			},
-		}
-		if cloudInitUserData != "" {
-			cloudInitVolume.VolumeSource.CloudInitNoCloud.UserData = cloudInitUserData
-		}
-		if cloudInitNetworkData != "" {
-			cloudInitVolume.VolumeSource.CloudInitNoCloud.NetworkData = cloudInitNetworkData
 		}
 		template.Spec.Volumes = append(template.Spec.Volumes, cloudInitVolume)
 	}
@@ -291,8 +279,8 @@ func buildVolumes(volumes []vmv1alpha1.VolumeStatus) []kubevirtv1.Volume {
 	return volList
 }
 
-// buildCloudInitUserData 构建 Cloud-Init 用户数据（不包含网络配置）
-func buildCloudInitUserData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong) string {
+// buildCloudInitData 构建 Cloud-Init 用户数据（包含网络配置）
+func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkStatus) string {
 	logger := log.FromContext(ctx)
 	cloudInit := "#cloud-config\n"
 
@@ -389,13 +377,117 @@ func buildCloudInitUserData(ctx context.Context, c client.Client, vmp *vmv1alpha
 		}
 	}
 
+	// 配置网络（如果有静态 IP）
+	// 创建网络名称到 NetworkStatus 的映射，以便获取 MAC 地址
+	netStatusMap := make(map[string]vmv1alpha1.NetworkStatus)
+	for _, netStatus := range networks {
+		netStatusMap[netStatus.Name] = netStatus
+	}
+
+	hasNetworkConfig := false
+	multusInterfaceIndex := 1 // 用于跟踪 Multus 接口的索引（从 1 开始，因为 0 是 default）
+	for _, net := range vmp.Spec.Networks {
+		if net.IPConfig != nil && net.IPConfig.Mode == "static" && net.IPConfig.Address != nil {
+			// 跳过 default 网络（它使用 Pod 网络，不需要静态 IP 配置）
+			if net.Name == "default" {
+				continue
+			}
+
+			// 检查是否有 NADName（Multus 网络必须有 NADName）
+			netStatus, hasStatus := netStatusMap[net.Name]
+			if hasStatus && netStatus.NADName == "" {
+				// 如果没有 NADName，说明不是 Multus 网络，跳过
+				continue
+			}
+
+			if !hasNetworkConfig {
+				cloudInit += "\nnetwork:\n"
+				cloudInit += "  version: 2\n"
+				cloudInit += "  ethernets:\n"
+				hasNetworkConfig = true
+			}
+
+			// 对于 Multus 网络，尝试获取 MAC 地址和接口名称
+			macAddress := ""
+			interfaceName := ""
+
+			// 优先使用 NetworkStatus 中的信息
+			if hasStatus {
+				if netStatus.MACAddress != "" {
+					macAddress = netStatus.MACAddress
+				}
+				if netStatus.Interface != "" {
+					interfaceName = netStatus.Interface
+				}
+			}
+
+			// 如果 NetworkStatus 中没有 MAC 地址，尝试从现有 VMI 获取
+			if macAddress == "" && hasStatus {
+				vmiName := fmt.Sprintf("%s-vm", vmp.Name)
+				vmi := &kubevirtv1.VirtualMachineInstance{}
+				key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmiName}
+				if err := c.Get(ctx, key, vmi); err == nil {
+					for _, iface := range vmi.Status.Interfaces {
+						if iface.Name == net.Name {
+							if iface.MAC != "" {
+								macAddress = iface.MAC
+							}
+							break
+						}
+					}
+				}
+			}
+
+			// 生成网络配置
+			if macAddress != "" {
+				// 使用 MAC 地址匹配（最可靠）
+				if interfaceName != "" {
+					cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
+					cloudInit += fmt.Sprintf("      match:\n")
+					cloudInit += fmt.Sprintf("        macaddress: %s\n", macAddress)
+					cloudInit += fmt.Sprintf("      set-name: %s\n", interfaceName)
+				} else {
+					tempInterfaceName := fmt.Sprintf("eth%d", multusInterfaceIndex)
+					cloudInit += fmt.Sprintf("    %s:\n", tempInterfaceName)
+					cloudInit += fmt.Sprintf("      match:\n")
+					cloudInit += fmt.Sprintf("        macaddress: %s\n", macAddress)
+				}
+			} else {
+				logger.V(1).Info("MAC address not available for network, network configuration may not work correctly", "network", net.Name)
+				if interfaceName == "" {
+					interfaceName = fmt.Sprintf("eth%d", multusInterfaceIndex)
+				}
+				cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
+			}
+
+			// 禁用 DHCP，使用静态 IP
+			cloudInit += "      dhcp4: false\n"
+			cloudInit += "      dhcp6: false\n"
+			cloudInit += "      addresses:\n"
+			cloudInit += fmt.Sprintf("        - %s\n", *net.IPConfig.Address)
+			if net.IPConfig.Gateway != nil {
+				cloudInit += fmt.Sprintf("      gateway4: %s\n", *net.IPConfig.Gateway)
+			}
+			if len(net.IPConfig.DNSServers) > 0 {
+				cloudInit += "      nameservers:\n"
+				cloudInit += "        addresses:\n"
+				for _, dns := range net.IPConfig.DNSServers {
+					cloudInit += fmt.Sprintf("          - %s\n", dns)
+				}
+			}
+
+			// 增加 Multus 接口索引
+			multusInterfaceIndex++
+		}
+	}
+
 	return cloudInit
 }
 
 // buildCloudInitNetworkData 构建 Cloud-Init 网络配置数据（使用 NetworkData 字段）
 func buildCloudInitNetworkData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkStatus) string {
 	logger := log.FromContext(ctx)
-	
+
 	// 创建网络名称到 NetworkStatus 的映射，以便获取 MAC 地址
 	netStatusMap := make(map[string]vmv1alpha1.NetworkStatus)
 	for _, netStatus := range networks {
@@ -405,7 +497,7 @@ func buildCloudInitNetworkData(ctx context.Context, c client.Client, vmp *vmv1al
 	hasNetworkConfig := false
 	networkData := ""
 	multusInterfaceIndex := 1 // 用于跟踪 Multus 接口的索引（从 1 开始，因为 0 是 default）
-	
+
 	for _, net := range vmp.Spec.Networks {
 		if net.IPConfig != nil && net.IPConfig.Mode == "static" && net.IPConfig.Address != nil {
 			// 跳过 default 网络（它使用 Pod 网络，不需要静态 IP 配置）
@@ -441,15 +533,16 @@ func buildCloudInitNetworkData(ctx context.Context, c client.Client, vmp *vmv1al
 				}
 			}
 
-			// 如果 NetworkStatus 中没有 MAC 地址或接口名称，尝试从现有 VMI 获取
-			if (macAddress == "" || interfaceName == "") && hasStatus && netStatus.NADName != "" {
+			// 如果 NetworkStatus 中没有 MAC 地址，尝试从现有 VMI 获取
+			// 注意：如果 hasStatus 为 false，说明是首次创建，VMI 可能还不存在
+			if macAddress == "" && hasStatus {
 				vmiName := fmt.Sprintf("%s-vm", vmp.Name)
 				vmi := &kubevirtv1.VirtualMachineInstance{}
 				key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmiName}
 				if err := c.Get(ctx, key, vmi); err == nil {
 					for _, iface := range vmi.Status.Interfaces {
 						if iface.Name == net.Name {
-							if macAddress == "" && iface.MAC != "" {
+							if iface.MAC != "" {
 								macAddress = iface.MAC
 							}
 							break
