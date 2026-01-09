@@ -1,7 +1,7 @@
 apiVersion: vm.novasphere.dev/v1alpha1
 kind: Wukong
 metadata:
-  name: ubuntu-vm-dual-network-test
+  name: ubuntu-vm-dual-network-static
   labels:
     app.kubernetes.io/name: novasphere
     app.kubernetes.io/managed-by: kustomize

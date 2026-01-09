@@ -407,6 +407,7 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 			if !hasNetworkConfig {
 				cloudInit += "\nnetwork:\n"
 				cloudInit += "  version: 2\n"
+				cloudInit += "  renderer: networkd\n" // 使用 networkd renderer，更可靠
 				cloudInit += "  ethernets:\n"
 				hasNetworkConfig = true
 			}
@@ -426,19 +427,21 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 				}
 			}
 
-			// 如果 NetworkStatus 中没有 MAC 地址，尝试从现有 VMI 获取
-			if macAddress == "" && hasStatus && netStatus.NADName != "" {
+			// 如果 NetworkStatus 中没有 MAC 地址或接口名称，尝试从现有 VMI 获取
+			if (macAddress == "" || interfaceName == "") && hasStatus && netStatus.NADName != "" {
 				vmiName := fmt.Sprintf("%s-vm", vmp.Name)
 				vmi := &kubevirtv1.VirtualMachineInstance{}
 				key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmiName}
 				if err := c.Get(ctx, key, vmi); err == nil {
-					// 查找对应的接口 MAC 地址
+					// 查找对应的接口 MAC 地址和接口名称
 					// 注意：VMI 接口的 Name 是网络名称（net.Name），不是 NAD 名称
 					for _, iface := range vmi.Status.Interfaces {
 						if iface.Name == net.Name {
-							if iface.MAC != "" {
+							if macAddress == "" && iface.MAC != "" {
 								macAddress = iface.MAC
 							}
+							// 注意：VMI 中的接口名称可能不是 VM 内部的接口名称
+							// 但我们可以尝试使用 podInterfaceName 或其他信息
 							break
 						}
 					}
@@ -476,6 +479,10 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 				cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
 			}
 
+			// 禁用 DHCP，使用静态 IP
+			cloudInit += "      dhcp4: false\n"
+			cloudInit += "      dhcp6: false\n"
+			// 添加 addresses 配置
 			cloudInit += "      addresses:\n"
 			cloudInit += fmt.Sprintf("        - %s\n", *net.IPConfig.Address)
 			if net.IPConfig.Gateway != nil {

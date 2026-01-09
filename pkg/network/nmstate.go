@@ -125,7 +125,7 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 			"state": "up",
 			"vlan": map[string]interface{}{
 				"base-iface": physicalInterface,
-				"id":         *netCfg.VLANID,
+				"id":         int64(*netCfg.VLANID), // 转换为 int64，unstructured 需要可深度复制的类型
 			},
 		}
 		interfaces = append(interfaces, vlanInterface)
@@ -189,7 +189,7 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 				"address": []interface{}{
 					map[string]interface{}{
 						"ip":            ip,
-						"prefix-length": prefixLen,
+						"prefix-length": int64(prefixLen), // 转换为 int64，unstructured 需要可深度复制的类型
 					},
 				},
 			}
