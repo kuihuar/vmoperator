@@ -21,12 +21,15 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	vmv1alpha1 "github.com/kuihuar/novasphere/api/v1alpha1"
 	"github.com/kuihuar/novasphere/pkg/kubevirt"
@@ -288,20 +291,68 @@ func (r *WukongReconciler) reconcileDelete(ctx context.Context, vmp *vmv1alpha1.
 	logger := log.FromContext(ctx)
 	logger.Info("Reconciling deletion of Wukong", "name", vmp.Name)
 
-	// 1. 删除 VirtualMachine
+	// 1. 删除 VirtualMachine（显式删除，确保资源被清理）
 	if vmp.Status.VMName != "" {
 		vmName := vmp.Status.VMName
 		logger.Info("Deleting VirtualMachine", "name", vmName)
-		// 注意：由于使用了 OwnerReference，VM 应该会自动删除
-		// 如果需要显式删除，可以在这里调用 kubevirt 包的删除函数
-		// 目前依赖 OwnerReference 的级联删除机制
+		vm := &kubevirtv1.VirtualMachine{}
+		key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmName}
+		if err := r.Get(ctx, key, vm); err == nil {
+			// VirtualMachine 存在，删除它
+			if err := r.Delete(ctx, vm); err != nil {
+				if !apierrors.IsNotFound(err) {
+					logger.Error(err, "failed to delete VirtualMachine", "name", vmName)
+					return ctrl.Result{RequeueAfter: time.Second * 5}, err
+				}
+			} else {
+				logger.Info("VirtualMachine deletion initiated", "name", vmName)
+				// 等待 VirtualMachine 删除完成
+				return ctrl.Result{RequeueAfter: time.Second * 2}, nil
+			}
+		} else if !apierrors.IsNotFound(err) {
+			logger.Error(err, "failed to get VirtualMachine", "name", vmName)
+			return ctrl.Result{RequeueAfter: time.Second * 5}, err
+		}
 	}
 
-	// 2. 删除 PVC/DataVolume（通过 OwnerReference 自动删除，但为了确保，可以显式删除）
+	// 2. 删除 DataVolume（先删除 DataVolume，它会自动删除 PVC）
 	for _, vol := range vmp.Status.Volumes {
 		if vol.PVCName != "" {
-			logger.V(1).Info("PVC will be deleted", "name", vol.PVCName)
-			// PVC 和 DataVolume 会通过 OwnerReference 自动删除
+			// 检查是否是 DataVolume 创建的 PVC（DataVolume 名称通常与 PVC 名称相同）
+			dvName := vol.PVCName
+			logger.Info("Deleting DataVolume", "name", dvName)
+			if err := storage.DeleteDataVolume(ctx, r.Client, vmp.Namespace, dvName); err != nil {
+				if !apierrors.IsNotFound(err) {
+					logger.Error(err, "failed to delete DataVolume", "name", dvName)
+					return ctrl.Result{RequeueAfter: time.Second * 5}, err
+				}
+			} else {
+				logger.Info("DataVolume deletion initiated", "name", dvName)
+				// 等待 DataVolume 删除完成
+				return ctrl.Result{RequeueAfter: time.Second * 2}, nil
+			}
+
+			// 如果 PVC 不是由 DataVolume 创建的，直接删除 PVC
+			pvc := &corev1.PersistentVolumeClaim{}
+			key := client.ObjectKey{Namespace: vmp.Namespace, Name: vol.PVCName}
+			if err := r.Get(ctx, key, pvc); err == nil {
+				// 检查是否有 ownerReference（如果有，说明会被自动删除）
+				if len(pvc.OwnerReferences) == 0 {
+					logger.Info("Deleting PVC", "name", vol.PVCName)
+					if err := r.Delete(ctx, pvc); err != nil {
+						if !apierrors.IsNotFound(err) {
+							logger.Error(err, "failed to delete PVC", "name", vol.PVCName)
+							return ctrl.Result{RequeueAfter: time.Second * 5}, err
+						}
+					} else {
+						logger.Info("PVC deletion initiated", "name", vol.PVCName)
+						return ctrl.Result{RequeueAfter: time.Second * 2}, nil
+					}
+				}
+			} else if !apierrors.IsNotFound(err) {
+				logger.Error(err, "failed to get PVC", "name", vol.PVCName)
+				return ctrl.Result{RequeueAfter: time.Second * 5}, err
+			}
 		}
 	}
 
@@ -311,10 +362,33 @@ func (r *WukongReconciler) reconcileDelete(ctx context.Context, vmp *vmv1alpha1.
 		if net.NADName != "" {
 			logger.V(1).Info("NAD will be cleaned up", "name", net.NADName)
 			// NAD 会通过 OwnerReference 或手动清理
+			// 如果需要显式删除，可以在这里添加删除逻辑
 		}
 	}
 
-	// 4. 移除 finalizer
+	// 4. 检查是否所有资源都已删除
+	// 如果 VirtualMachine 或 PVC 还在，继续等待
+	if vmp.Status.VMName != "" {
+		vm := &kubevirtv1.VirtualMachine{}
+		key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmp.Status.VMName}
+		if err := r.Get(ctx, key, vm); err == nil {
+			logger.V(1).Info("VirtualMachine still exists, waiting for deletion", "name", vmp.Status.VMName)
+			return ctrl.Result{RequeueAfter: time.Second * 2}, nil
+		}
+	}
+
+	for _, vol := range vmp.Status.Volumes {
+		if vol.PVCName != "" {
+			pvc := &corev1.PersistentVolumeClaim{}
+			key := client.ObjectKey{Namespace: vmp.Namespace, Name: vol.PVCName}
+			if err := r.Get(ctx, key, pvc); err == nil {
+				logger.V(1).Info("PVC still exists, waiting for deletion", "name", vol.PVCName)
+				return ctrl.Result{RequeueAfter: time.Second * 2}, nil
+			}
+		}
+	}
+
+	// 5. 所有资源已删除，移除 finalizer
 	vmp.Finalizers = removeString(vmp.Finalizers, finalizerName)
 	if err := r.Update(ctx, vmp); err != nil {
 		logger.Error(err, "unable to remove finalizer")

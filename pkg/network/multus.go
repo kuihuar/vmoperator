@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -180,28 +181,31 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 				"type": "dhcp",
 			}
 		} else if netCfg.IPConfig.Mode == "static" && netCfg.IPConfig.Address != nil {
-			// bridge CNI 使用 static IPAM
+			// bridge CNI 使用 host-local IPAM 配置静态 IP
+			// 解析 IP 地址和子网掩码
+			address := *netCfg.IPConfig.Address
+			// address 格式: "192.168.100.10/24"
+			// 提取 IP 和子网
+			ip, ipNet, err := net.ParseCIDR(address)
+			if err != nil {
+				return "", fmt.Errorf("invalid IP address format: %s", address)
+			}
+
+			// 获取子网范围
+			subnet := ipNet.String()
+
+			// 使用 host-local IPAM，设置 rangeStart 和 rangeEnd 为同一个 IP
+			// 这样可以确保分配固定的 IP 地址
 			cfg.IPAM = map[string]interface{}{
-				"type": "static",
-				"addresses": []map[string]string{
-					{
-						"address": *netCfg.IPConfig.Address,
-					},
-				},
+				"type":       "host-local",
+				"subnet":     subnet,
+				"rangeStart": ip.String(),
+				"rangeEnd":   ip.String(),
 			}
-			if netCfg.IPConfig.Gateway != nil {
-				cfg.IPAM["routes"] = []map[string]string{
-					{
-						"dst": "0.0.0.0/0",
-						"gw":  *netCfg.IPConfig.Gateway,
-					},
-				}
-			}
-			if len(netCfg.IPConfig.DNSServers) > 0 {
-				cfg.IPAM["dns"] = map[string]interface{}{
-					"nameservers": netCfg.IPConfig.DNSServers,
-				}
-			}
+
+			// 路由和 DNS 配置需要在 CNI 配置的顶层，而不是 IPAM 中
+			// 但 bridge CNI 不支持在配置中直接设置路由和 DNS
+			// 这些应该通过 Cloud-Init 在 VM 内部配置
 		}
 	}
 
