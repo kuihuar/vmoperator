@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -150,9 +151,13 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 		interfaces = append(interfaces, bridgeInterface)
 	} else {
 		// 没有 VLAN，直接使用物理网卡
-		// 重要：不在 desiredState 中明确指定物理网卡，只将其作为桥接端口
-		// 这样可以避免 NMState 管理物理网卡的 IP 配置，保留现有的 Netplan/NetworkManager 配置
-		// NMState 只需要知道物理网卡作为桥接端口即可，不需要直接管理它
+		// 重要：NMState 采用声明式配置，必须明确指定每个接口的状态
+		// 当物理网卡被添加到桥接时，如果不明确配置，NMState 会移除物理网卡的 IP
+		// 因此需要：
+		// 1. 在桥接上配置节点 IP（从 NodeIP 字段获取）
+		// 2. 明确指定物理网卡禁用 IP（IP 在桥接上）
+
+		// 构建桥接接口配置
 		bridgeInterface := map[string]interface{}{
 			"name":  bridgeName,
 			"type":  "linux-bridge",
@@ -170,9 +175,42 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 				},
 			},
 		}
+
+		// 如果指定了 NodeIP，在桥接上配置 IP
+		if netCfg.NodeIP != nil && *netCfg.NodeIP != "" {
+			ip, prefixLen, err := parseIPAddress(*netCfg.NodeIP)
+			if err != nil {
+				logger.Error(err, "failed to parse nodeIP", "nodeIP", *netCfg.NodeIP, "network", netCfg.Name)
+				return fmt.Errorf("invalid nodeIP format: %s, expected format: 192.168.0.121/24, error: %w", *netCfg.NodeIP, err)
+			}
+
+			bridgeInterface["ipv4"] = map[string]interface{}{
+				"enabled": true,
+				"address": []interface{}{
+					map[string]interface{}{
+						"ip":            ip,
+						"prefix-length": prefixLen,
+					},
+				},
+			}
+			logger.Info("Configuring node IP on bridge", "bridge", bridgeName, "ip", ip, "prefixLen", prefixLen)
+		} else {
+			// 如果没有指定 NodeIP，记录警告
+			logger.V(1).Info("NodeIP not specified, bridge will be created without IP. Node network connectivity may be lost", "network", netCfg.Name, "physicalInterface", physicalInterface)
+		}
+
 		interfaces = append(interfaces, bridgeInterface)
-		// 注意：不在 desiredState 中包含物理网卡的配置，让 Netplan/NetworkManager 继续管理
-		// NMState 只负责创建桥接并将物理网卡作为端口，不会改变物理网卡的 IP 配置
+
+		// 明确指定物理网卡的状态：禁用 IP（IP 在桥接上）
+		physicalInterfaceConfig := map[string]interface{}{
+			"name":  physicalInterface,
+			"type":  "ethernet",
+			"state": "up",
+			"ipv4": map[string]interface{}{
+				"enabled": false, // 禁用物理网卡的 IP，IP 在桥接上
+			},
+		}
+		interfaces = append(interfaces, physicalInterfaceConfig)
 	}
 
 	desiredState["interfaces"] = interfaces
@@ -213,4 +251,17 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 	}
 
 	return nil
+}
+
+// parseIPAddress 解析 IP 地址和前缀长度
+// 输入格式: "192.168.0.121/24"
+// 返回: IP 地址字符串, 前缀长度, 错误
+func parseIPAddress(ipAddr string) (string, int, error) {
+	ip, ipNet, err := net.ParseCIDR(ipAddr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid CIDR format: %w", err)
+	}
+
+	prefixLen, _ := ipNet.Mask.Size()
+	return ip.String(), prefixLen, nil
 }

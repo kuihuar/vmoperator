@@ -108,6 +108,14 @@ type NetworkConfig struct {
 	// +optional
 	PhysicalInterface string `json:"physicalInterface,omitempty"`
 
+	// NodeIP is the IP address of the physical interface on the node
+	// This IP will be migrated to the bridge when creating the bridge
+	// Format: "192.168.0.121/24"
+	// Required for bridge and ovs network types to preserve node network connectivity
+	// If not specified, the operator will try to get it from NodeNetworkState
+	// +optional
+	NodeIP *string `json:"nodeIP,omitempty"`
+
 	// IPConfig defines the IP configuration for this network
 	// +optional
 	IPConfig *IPConfigSpec `json:"ipConfig,omitempty"`

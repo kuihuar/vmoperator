@@ -229,6 +229,20 @@ spec:
                       description: Name is the unique name of the network interface
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
+                    nodeIP:
+                      description: |-
+                        NodeIP is the IP address of the physical interface on the node
+                        This IP will be migrated to the bridge when creating the bridge
+                        Format: "192.168.0.121/24"
+                        Required for bridge and ovs network types to preserve node network connectivity
+                        If not specified, the operator will try to get it from NodeNetworkState
+                      type: string
+                    physicalInterface:
+                      description: |-
+                        PhysicalInterface is the physical network interface name (e.g., "ens160", "ens192")
+                        Used by NMState to create bridge with this interface as a port
+                        Required for bridge and ovs network types
+                      type: string
                     type:
                       description: |-
                         Type is the network type: bridge, macvlan, sriov, or ovs
