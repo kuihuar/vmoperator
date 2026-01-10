@@ -123,10 +123,11 @@ func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, n
 				Memory: &kubevirtv1.Memory{
 					Guest: &memoryQuantity,
 				},
-				Devices: kubevirtv1.Devices{
-					Disks:      buildDisks(volumes),
-					Interfaces: buildInterfaces(networks),
-				},
+					Devices: kubevirtv1.Devices{
+						Disks:      buildDisks(volumes),
+						Interfaces: buildInterfaces(networks),
+						GPUs:       buildGPUs(vmp.Spec.GPUs),
+					},
 			},
 			Networks: buildNetworks(networks),
 			Volumes:  buildVolumes(volumes),
@@ -664,4 +665,16 @@ func GetVMStatus(ctx context.Context, c client.Client, namespace, vmName string)
 	nodeName := vmi.Status.NodeName
 
 	return phase, nodeName, nil
+}
+
+// buildGPUs 构建 GPU 设备列表
+func buildGPUs(gpuConfigs []vmv1alpha1.GPUDevice) []kubevirtv1.GPU {
+	gpus := make([]kubevirtv1.GPU, 0, len(gpuConfigs))
+	for _, config := range gpuConfigs {
+		gpus = append(gpus, kubevirtv1.GPU{
+			Name:       config.Name,
+			DeviceName: config.DeviceName,
+		})
+	}
+	return gpus
 }
