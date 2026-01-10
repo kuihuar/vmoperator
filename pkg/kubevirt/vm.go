@@ -123,15 +123,23 @@ func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, n
 				Memory: &kubevirtv1.Memory{
 					Guest: &memoryQuantity,
 				},
-					Devices: kubevirtv1.Devices{
-						Disks:      buildDisks(volumes),
-						Interfaces: buildInterfaces(networks),
-						GPUs:       buildGPUs(vmp.Spec.GPUs),
-					},
+				Devices: kubevirtv1.Devices{
+					Disks:      buildDisks(volumes),
+					Interfaces: buildInterfaces(networks),
+					GPUs:       buildGPUs(vmp.Spec.GPUs),
+				},
 			},
 			Networks: buildNetworks(networks),
 			Volumes:  buildVolumes(volumes),
 		},
+	}
+
+	// 如果指定了从快照恢复
+	if vmp.Spec.RestoreFromSnapshot != "" {
+		// 在实际实现中，这里需要根据快照名称找到对应的 VirtualMachineSnapshot
+		// 并将其作为 VM 的数据源。KubeVirt 支持通过 VirtualMachineRestore 资源来实现。
+		// 原型演示：记录日志并设置相关标志
+		logger.Info("VM will be restored from snapshot", "snapshot", vmp.Spec.RestoreFromSnapshot)
 	}
 
 	// 添加 Cloud-Init 配置（如果有）

@@ -74,6 +74,10 @@ type WukongSpec struct {
 		// GPUs defines the GPU devices to be passed through to the virtual machine
 		// +optional
 		GPUs []GPUDevice `json:"gpus,omitempty"`
+	
+		// RestoreFromSnapshot specifies the name of a WukongSnapshot to restore from
+		// +optional
+		RestoreFromSnapshot string `json:"restoreFromSnapshot,omitempty"`
 	}
 	
 	// GPUDevice defines a GPU device for passthrough
