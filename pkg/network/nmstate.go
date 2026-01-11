@@ -23,15 +23,11 @@ func ReconcileNMState(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wuko
 	logger := log.FromContext(ctx)
 	logger.Info("Reconciling NMState networks", "vmprofile", client.ObjectKeyFromObject(vmp), "networkCount", len(vmp.Spec.Networks))
 
-	// 检查 NMState CRD 是否存在
+	// 检查 NMState CRD 是否存在（必须先检查，如果有需要 NMState 的网络但 CRD 不存在，应该报错）
 	crdExists, err := checkNMStateCRDExists(ctx, c)
 	if err != nil {
 		logger.Error(err, "failed to check NMState CRD")
 		return err
-	}
-	if !crdExists {
-		logger.V(1).Info("NMState CRD not found, skipping NMState reconciliation")
-		return nil
 	}
 
 	// 遍历网络配置，为需要 NMState 的网络创建 NodeNetworkConfigurationPolicy
@@ -41,18 +37,21 @@ func ReconcileNMState(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wuko
 			continue
 		}
 
-		// 只处理 bridge 和 ovs 类型（macvlan/ipvlan 不支持）
+		// 只处理 bridge 和 ovs 类型（其他类型由 Multus 处理，不需要 NMState）
 		if netCfg.Type != "bridge" && netCfg.Type != "ovs" {
-			logger.V(1).Info("Skipping network type for NMState", "network", netCfg.Name, "type", netCfg.Type)
 			continue
 		}
 
-		// 对于 bridge 类型，需要创建桥接
-		if netCfg.Type == "bridge" || netCfg.Type == "ovs" {
-			if err := reconcileBridgePolicy(ctx, c, vmp, &netCfg); err != nil {
-				logger.Error(err, "failed to reconcile bridge policy", "network", netCfg.Name)
-				return err
-			}
+		// 如果配置了 bridge/ovs 类型但 CRD 不存在，报错
+		if !crdExists {
+			logger.Error(nil, "NMState CRD not found but bridge/ovs network is configured", "wukong", vmp.Name, "network", netCfg.Name, "type", netCfg.Type)
+			return fmt.Errorf("NMState CRD (nodenetworkconfigurationpolicies.nmstate.io) not found, but bridge/ovs network %s (type: %s) is configured in Wukong %s. Please install NMState Operator", netCfg.Name, netCfg.Type, vmp.Name)
+		}
+
+		// 处理 bridge 和 ovs 类型
+		if err := reconcileBridgePolicy(ctx, c, vmp, &netCfg); err != nil {
+			logger.Error(err, "failed to reconcile bridge policy", "network", netCfg.Name)
+			return err
 		}
 	}
 
