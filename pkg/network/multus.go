@@ -177,9 +177,10 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 	// 根据 IPConfig 选择 ipam 类型
 	if netCfg.IPConfig != nil {
 		if netCfg.IPConfig.Mode == "dhcp" {
-			cfg.IPAM = map[string]interface{}{
-				"type": "dhcp",
-			}
+			// 对于 DHCP 模式，不设置 IPAM
+			// Bridge CNI 不支持 DHCP IPAM（DHCP IPAM 是独立的 CNI 插件）
+			// VM 内部的 IP 将通过 Cloud-Init 的 DHCP 配置获取
+			// 不设置 IPAM，让接口在 VM 内部通过 DHCP 获取 IP
 		} else if netCfg.IPConfig.Mode == "static" && netCfg.IPConfig.Address != nil {
 			// bridge CNI 使用 host-local IPAM 配置静态 IP
 			// 解析 IP 地址和子网掩码

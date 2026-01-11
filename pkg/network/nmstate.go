@@ -18,7 +18,6 @@ import (
 //
 // 功能：
 // - 对于 bridge 类型的网络，自动创建 Linux Bridge
-// - 对于有 VLAN 的网络，自动创建 VLAN 接口
 // - 与 Multus 配合：先配置节点网络，Multus 再使用这些网络
 func ReconcileNMState(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong) error {
 	logger := log.FromContext(ctx)
@@ -98,11 +97,50 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 		return fmt.Errorf("physicalInterface is required for bridge/ovs network type, network: %s", netCfg.Name)
 	}
 
-	// 安全校验：如果配置了桥接但没有指定 NodeIP，且物理网卡不是 VLAN 基础接口，
-	// 则存在极高的节点失联风险。
-	if netCfg.VLANID == nil && (netCfg.NodeIP == nil || *netCfg.NodeIP == "") {
-		logger.Error(nil, "CRITICAL: Bridge configuration without NodeIP detected. This will likely cause node network isolation!", "network", netCfg.Name, "interface", physicalInterface)
-		return fmt.Errorf("nodeIP is mandatory for non-VLAN bridge on physical interface %s to prevent network loss", physicalInterface)
+	// 检查是否配置了 VLANID（暂时不支持）
+	if netCfg.VLANID != nil {
+		logger.Error(nil, "VLAN is not supported yet", "network", netCfg.Name, "vlanId", *netCfg.VLANID, "physicalInterface", physicalInterface)
+		return fmt.Errorf("VLAN configuration is not supported yet, network: %s, vlanId: %d", netCfg.Name, *netCfg.VLANID)
+	}
+
+	// 自动获取物理网卡的 IP 配置信息（IP 地址和配置方式：DHCP 或静态）
+	var nodeIP string
+	var useDHCP bool
+	ipInfo, err := getIPConfigFromNodeNetworkState(ctx, c, physicalInterface)
+	if err != nil {
+		logger.Error(err, "failed to get IP config from NodeNetworkState", "interface", physicalInterface)
+		// 如果无法获取实际 IP，但用户指定了 nodeIP，使用用户指定的 IP（假设是静态）
+		if netCfg.NodeIP != nil && *netCfg.NodeIP != "" {
+			nodeIP = *netCfg.NodeIP
+			useDHCP = false // 用户指定了 IP，假设是静态
+			logger.Info("Using user-specified nodeIP (unable to verify from NodeNetworkState)", "nodeIP", nodeIP)
+		} else {
+			logger.Error(nil, "CRITICAL: Bridge configuration without NodeIP and unable to get actual IP. This will likely cause node network isolation!", "network", netCfg.Name, "interface", physicalInterface)
+			return fmt.Errorf("nodeIP is mandatory for bridge on physical interface %s to prevent network loss, and failed to get actual IP from NodeNetworkState: %w", physicalInterface, err)
+		}
+	} else {
+		// 成功获取实际 IP 配置信息
+		useDHCP = ipInfo.useDHCP
+		if netCfg.NodeIP != nil && *netCfg.NodeIP != "" {
+			// 用户指定了 nodeIP，验证是否匹配（只比较 IP 部分，忽略前缀长度）
+			userIP, _, err1 := parseIPAddress(*netCfg.NodeIP)
+			actualIPOnly, _, err2 := parseIPAddress(ipInfo.ipAddress)
+			if err1 == nil && err2 == nil && userIP != actualIPOnly {
+				// IP 不匹配，使用实际的 IP 并记录警告
+				logger.Warn("User-specified nodeIP does not match actual IP, using actual IP to prevent network loss", "userIP", *netCfg.NodeIP, "actualIP", ipInfo.ipAddress, "interface", physicalInterface)
+				nodeIP = ipInfo.ipAddress
+				// 保持原有的 DHCP 配置方式
+			} else {
+				// IP 匹配或解析失败，使用用户指定的 IP（假设是静态）
+				nodeIP = *netCfg.NodeIP
+				useDHCP = false // 用户指定了 IP，假设是静态
+			}
+		} else {
+			// 用户没有指定 nodeIP，使用实际的 IP 配置
+			logger.Info("Auto-detected IP config from NodeNetworkState", "nodeIP", ipInfo.ipAddress, "useDHCP", ipInfo.useDHCP, "interface", physicalInterface)
+			nodeIP = ipInfo.ipAddress
+			// useDHCP 已经在上面设置了
+		}
 	}
 
 	// 构建 NodeNetworkConfigurationPolicy
@@ -123,102 +161,77 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 
 	interfaces := []interface{}{}
 
-	// 如果有 VLAN，先创建 VLAN 接口
-	if netCfg.VLANID != nil {
-		vlanInterfaceName := fmt.Sprintf("%s.%d", physicalInterface, *netCfg.VLANID)
-		vlanInterface := map[string]interface{}{
-			"name":  vlanInterfaceName,
-			"type":  "vlan",
-			"state": "up",
-			"vlan": map[string]interface{}{
-				"base-iface": physicalInterface,
-				"id":         int64(*netCfg.VLANID), // 转换为 int64，unstructured 需要可深度复制的类型
-			},
-		}
-		interfaces = append(interfaces, vlanInterface)
+	// 重要：NMState 采用声明式配置，必须明确指定每个接口的状态
+	// 当物理网卡被添加到桥接时，如果不明确配置，NMState 会移除物理网卡的 IP
+	// 因此需要：
+	// 1. 在桥接上配置节点 IP（从 NodeIP 字段获取，或自动检测）
+	// 2. 明确指定物理网卡禁用 IP（IP 在桥接上）
 
-		// 桥接使用 VLAN 接口作为端口
-		bridgeInterface := map[string]interface{}{
-			"name":  bridgeName,
-			"type":  "linux-bridge",
-			"state": "up",
-			"bridge": map[string]interface{}{
-				"options": map[string]interface{}{
-					"stp": map[string]interface{}{
-						"enabled": false,
-					},
-				},
-				"port": []interface{}{
-					map[string]interface{}{
-						"name": vlanInterfaceName,
-					},
+	// 构建桥接接口配置
+	bridgeInterface := map[string]interface{}{
+		"name":  bridgeName,
+		"type":  "linux-bridge",
+		"state": "up",
+		"bridge": map[string]interface{}{
+			"options": map[string]interface{}{
+				"stp": map[string]interface{}{
+					"enabled": false,
 				},
 			},
-		}
-		interfaces = append(interfaces, bridgeInterface)
-	} else {
-		// 没有 VLAN，直接使用物理网卡
-		// 重要：NMState 采用声明式配置，必须明确指定每个接口的状态
-		// 当物理网卡被添加到桥接时，如果不明确配置，NMState 会移除物理网卡的 IP
-		// 因此需要：
-		// 1. 在桥接上配置节点 IP（从 NodeIP 字段获取）
-		// 2. 明确指定物理网卡禁用 IP（IP 在桥接上）
-
-		// 构建桥接接口配置
-		bridgeInterface := map[string]interface{}{
-			"name":  bridgeName,
-			"type":  "linux-bridge",
-			"state": "up",
-			"bridge": map[string]interface{}{
-				"options": map[string]interface{}{
-					"stp": map[string]interface{}{
-						"enabled": false,
-					},
-				},
-				"port": []interface{}{
-					map[string]interface{}{
-						"name": physicalInterface,
-					},
+			"port": []interface{}{
+				map[string]interface{}{
+					"name": physicalInterface,
 				},
 			},
-		}
-
-		// 如果指定了 NodeIP，在桥接上配置 IP
-		if netCfg.NodeIP != nil && *netCfg.NodeIP != "" {
-			ip, prefixLen, err := parseIPAddress(*netCfg.NodeIP)
-			if err != nil {
-				logger.Error(err, "failed to parse nodeIP", "nodeIP", *netCfg.NodeIP, "network", netCfg.Name)
-				return fmt.Errorf("invalid nodeIP format: %s, expected format: 192.168.0.121/24, error: %w", *netCfg.NodeIP, err)
-			}
-
-			bridgeInterface["ipv4"] = map[string]interface{}{
-				"enabled": true,
-				"address": []interface{}{
-					map[string]interface{}{
-						"ip":            ip,
-						"prefix-length": int64(prefixLen), // 转换为 int64，unstructured 需要可深度复制的类型
-					},
-				},
-			}
-			logger.Info("Configuring node IP on bridge", "bridge", bridgeName, "ip", ip, "prefixLen", prefixLen)
-		} else {
-			// 如果没有指定 NodeIP，记录警告
-			logger.V(1).Info("NodeIP not specified, bridge will be created without IP. Node network connectivity may be lost", "network", netCfg.Name, "physicalInterface", physicalInterface)
-		}
-
-		interfaces = append(interfaces, bridgeInterface)
-
-		// 明确指定物理网卡的状态：禁用 IP（IP 在桥接上）
-		physicalInterfaceConfig := map[string]interface{}{
-			"name":  physicalInterface,
-			"type":  "ethernet",
-			"state": "up",
-			"ipv4": map[string]interface{}{
-				"enabled": false, // 禁用物理网卡的 IP，IP 在桥接上
-			},
-		}
-		interfaces = append(interfaces, physicalInterfaceConfig)
+		},
 	}
+
+	// 在桥接上配置节点 IP（从 nodeIP 变量获取，已经过验证或自动获取）
+	// 根据物理网卡的配置方式（DHCP 或静态）来配置桥接
+	if useDHCP {
+		// 物理网卡使用 DHCP，桥接也使用 DHCP
+		bridgeInterface["ipv4"] = map[string]interface{}{
+			"enabled": true,
+			"dhcp":    true,
+		}
+		logger.Info("Configuring bridge with DHCP (matching physical interface)", "bridge", bridgeName, "physicalInterface", physicalInterface)
+	} else if nodeIP != "" {
+		// 物理网卡使用静态 IP，桥接也使用静态 IP
+		ip, prefixLen, err := parseIPAddress(nodeIP)
+		if err != nil {
+			logger.Error(err, "failed to parse nodeIP", "nodeIP", nodeIP, "network", netCfg.Name)
+			return fmt.Errorf("invalid nodeIP format: %s, expected format: 192.168.0.121/24, error: %w", nodeIP, err)
+		}
+
+		bridgeInterface["ipv4"] = map[string]interface{}{
+			"enabled": true,
+			"dhcp":    false,
+			"address": []interface{}{
+				map[string]interface{}{
+					"ip":            ip,
+					"prefix-length": int64(prefixLen), // 转换为 int64，unstructured 需要可深度复制的类型
+				},
+			},
+		}
+		logger.Info("Configuring bridge with static IP (matching physical interface)", "bridge", bridgeName, "ip", ip, "prefixLen", prefixLen, "physicalInterface", physicalInterface)
+	} else {
+		// 既没有 DHCP 也没有静态 IP，这是异常情况
+		logger.Error(nil, "No IP configuration available for bridge", "network", netCfg.Name, "physicalInterface", physicalInterface)
+		return fmt.Errorf("no IP configuration available for bridge %s on physical interface %s", bridgeName, physicalInterface)
+	}
+
+	interfaces = append(interfaces, bridgeInterface)
+
+	// 明确指定物理网卡的状态：禁用 IP（IP 在桥接上）
+	physicalInterfaceConfig := map[string]interface{}{
+		"name":  physicalInterface,
+		"type":  "ethernet",
+		"state": "up",
+		"ipv4": map[string]interface{}{
+			"enabled": false, // 禁用物理网卡的 IP，IP 在桥接上
+		},
+	}
+	interfaces = append(interfaces, physicalInterfaceConfig)
 
 	desiredState["interfaces"] = interfaces
 
@@ -271,4 +284,90 @@ func parseIPAddress(ipAddr string) (string, int, error) {
 
 	prefixLen, _ := ipNet.Mask.Size()
 	return ip.String(), prefixLen, nil
+}
+
+// ipConfigInfo 存储从 NodeNetworkState 获取的 IP 配置信息
+type ipConfigInfo struct {
+	ipAddress string // IP 地址，格式: "192.168.0.105/24"
+	useDHCP   bool   // 是否使用 DHCP
+}
+
+// getIPConfigFromNodeNetworkState 从 NodeNetworkState 获取物理接口的 IP 配置信息（IP 地址和配置方式）
+// 返回: IP 配置信息（包括 IP 地址和是否使用 DHCP）
+func getIPConfigFromNodeNetworkState(ctx context.Context, c client.Client, interfaceName string) (*ipConfigInfo, error) {
+	// 获取所有 NodeNetworkState 资源
+	nodeNetworkStateList := &unstructured.UnstructuredList{}
+	nodeNetworkStateList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "nmstate.io",
+		Version: "v1beta1",
+		Kind:    "NodeNetworkStateList",
+	})
+	
+	err := c.List(ctx, nodeNetworkStateList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list NodeNetworkState: %w", err)
+	}
+	
+	// 遍历所有节点，查找接口的 IP 配置
+	for _, item := range nodeNetworkStateList.Items {
+		interfaces, found, err := unstructured.NestedSlice(item.Object, "status", "currentState", "interfaces")
+		if err != nil || !found {
+			continue
+		}
+		
+		for _, iface := range interfaces {
+			ifaceMap, ok := iface.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			
+			name, _ := ifaceMap["name"].(string)
+			if name != interfaceName {
+				continue
+			}
+			
+			// 找到目标接口，获取 IP 配置
+			ipv4, found, err := unstructured.NestedMap(ifaceMap, "ipv4")
+			if err != nil || !found {
+				continue
+			}
+			
+			// 检查是否启用 DHCP
+			dhcp, found, _ := unstructured.NestedBool(ipv4, "dhcp")
+			useDHCP := found && dhcp
+			
+			// 获取 IP 地址（如果有）
+			addresses, found, err := unstructured.NestedSlice(ipv4, "address")
+			var ipAddress string
+			if err == nil && found && len(addresses) > 0 {
+				// 获取第一个 IPv4 地址
+				addr, ok := addresses[0].(map[string]interface{})
+				if ok {
+					ip, _ := addr["ip"].(string)
+					prefixLen, _ := addr["prefix-length"].(int64)
+					if ip != "" && prefixLen > 0 {
+						ipAddress = fmt.Sprintf("%s/%d", ip, prefixLen)
+					}
+				}
+			}
+			
+			// 如果使用 DHCP，即使没有当前 IP 地址也返回（DHCP 会动态获取）
+			if useDHCP {
+				return &ipConfigInfo{
+					ipAddress: ipAddress, // 可能是空的（如果 DHCP 还没有分配 IP）
+					useDHCP:   true,
+				}, nil
+			}
+			
+			// 如果是静态 IP，必须有 IP 地址
+			if ipAddress != "" {
+				return &ipConfigInfo{
+					ipAddress: ipAddress,
+					useDHCP:   false,
+				}, nil
+			}
+		}
+	}
+	
+	return nil, fmt.Errorf("interface %s not found or has no IP configuration in NodeNetworkState", interfaceName)
 }
