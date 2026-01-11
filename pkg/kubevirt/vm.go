@@ -421,115 +421,115 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 		}
 	}
 
-	// 配置网络（如果有静态 IP）
+	// 配置网络（如果有 IPConfig）
+	networkConfig := buildCloudInitNetworkConfig(ctx, c, vmp, networks)
+	if networkConfig != "" {
+		cloudInit += networkConfig
+	}
+
+	return cloudInit
+}
+
+// buildCloudInitNetworkConfig 构建 Cloud-Init 网络配置（Netplan 格式）
+// 仅支持 DHCP 模式
+func buildCloudInitNetworkConfig(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkStatus) string {
+	logger := log.FromContext(ctx)
+
 	// 创建网络名称到 NetworkStatus 的映射，以便获取 MAC 地址
 	netStatusMap := make(map[string]vmv1alpha1.NetworkStatus)
 	for _, netStatus := range networks {
 		netStatusMap[netStatus.Name] = netStatus
 	}
 
-	hasNetworkConfig := false
+	var networkConfig strings.Builder
+	headerWritten := false // 用于确保 network: 头部只写入一次
 	multusInterfaceIndex := 1 // 用于跟踪 Multus 接口的索引（从 1 开始，因为 0 是 default）
+
 	for _, net := range vmp.Spec.Networks {
-		if net.IPConfig != nil && net.IPConfig.Mode == "static" && net.IPConfig.Address != nil {
-			// 跳过 default 网络（它使用 Pod 网络，不需要静态 IP 配置）
-			if net.Name == "default" {
-				continue
-			}
-
-			// 检查是否有 NADName（Multus 网络必须有 NADName）
-			netStatus, hasStatus := netStatusMap[net.Name]
-			if hasStatus && netStatus.NADName == "" {
-				// 如果没有 NADName，说明不是 Multus 网络，跳过
-				continue
-			}
-
-			if !hasNetworkConfig {
-				cloudInit += "\nnetwork:\n"
-				cloudInit += "  version: 2\n"
-				cloudInit += "  ethernets:\n"
-				hasNetworkConfig = true
-			}
-
-			// 对于 Multus 网络，尝试获取 MAC 地址和接口名称
-			macAddress := ""
-			interfaceName := ""
-
-			// 优先使用 NetworkStatus 中的信息
-			if hasStatus {
-				if netStatus.MACAddress != "" {
-					macAddress = netStatus.MACAddress
-				}
-				if netStatus.Interface != "" {
-					interfaceName = netStatus.Interface
-				}
-			}
-
-			// 如果 NetworkStatus 中没有 MAC 地址，尝试从现有 VMI 获取
-			if macAddress == "" && hasStatus {
-				vmiName := fmt.Sprintf("%s-vm", vmp.Name)
-				vmi := &kubevirtv1.VirtualMachineInstance{}
-				key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmiName}
-				if err := c.Get(ctx, key, vmi); err == nil {
-					for _, iface := range vmi.Status.Interfaces {
-						if iface.Name == net.Name {
-							if iface.MAC != "" {
-								macAddress = iface.MAC
-							}
-							break
-						}
-					}
-				}
-			}
-
-			// 生成网络配置
-			// 确定接口标识符
-			if interfaceName == "" {
-				interfaceName = fmt.Sprintf("eth%d", multusInterfaceIndex)
-			}
-
-			cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
-
-			if macAddress != "" {
-				// 使用 MAC 地址匹配（最可靠）
-				cloudInit += fmt.Sprintf("      match:\n")
-				cloudInit += fmt.Sprintf("        macaddress: %s\n", macAddress)
-				cloudInit += fmt.Sprintf("      set-name: %s\n", interfaceName)
-			} else {
-				// 如果没有 MAC 地址，尝试使用驱动程序或索引匹配（Netplan 允许）
-				logger.V(1).Info("MAC address not available for network, using index-based matching", "network", net.Name, "interface", interfaceName)
-				// 注意：在没有 MAC 的情况下，Netplan 很难精确匹配 Multus 接口
-				// 这里我们依赖 KubeVirt 默认的接口顺序
-			}
-
-			if net.IPConfig.Mode == "static" && net.IPConfig.Address != nil {
-				// 禁用 DHCP，使用静态 IP
-				cloudInit += "      dhcp4: false\n"
-				cloudInit += "      dhcp6: false\n"
-				cloudInit += "      addresses:\n"
-				cloudInit += fmt.Sprintf("        - %s\n", *net.IPConfig.Address)
-				if net.IPConfig.Gateway != nil {
-					cloudInit += fmt.Sprintf("      gateway4: %s\n", *net.IPConfig.Gateway)
-				}
-				if len(net.IPConfig.DNSServers) > 0 {
-					cloudInit += "      nameservers:\n"
-					cloudInit += "        addresses:\n"
-					for _, dns := range net.IPConfig.DNSServers {
-						cloudInit += fmt.Sprintf("          - %s\n", dns)
-					}
-				}
-			} else if net.IPConfig.Mode == "dhcp" {
-				// 启用 DHCP
-				cloudInit += "      dhcp4: true\n"
-				cloudInit += "      dhcp6: false\n"
-			}
-
-			// 增加 Multus 接口索引
-			multusInterfaceIndex++
+		// 跳过 default 网络（它使用 Pod 网络，不需要配置）
+		if net.Name == "default" {
+			continue
 		}
+
+		// 只处理有 IPConfig 且模式为 DHCP 的网络
+		if net.IPConfig == nil || net.IPConfig.Mode != "dhcp" {
+			continue
+		}
+
+		// 检查是否有 NADName（Multus 网络必须有 NADName）
+		netStatus, hasStatus := netStatusMap[net.Name]
+		if hasStatus && netStatus.NADName == "" {
+			// 如果没有 NADName，说明不是 Multus 网络，跳过
+			continue
+		}
+
+		// 第一次遇到需要配置的网络时，写入 network: 头部
+		if !headerWritten {
+			networkConfig.WriteString("\nnetwork:\n")
+			networkConfig.WriteString("  version: 2\n")
+			networkConfig.WriteString("  ethernets:\n")
+			headerWritten = true
+		}
+
+		// 对于 Multus 网络，尝试获取 MAC 地址和接口名称
+		macAddress := ""
+		interfaceName := ""
+
+		// 优先使用 NetworkStatus 中的信息
+		if hasStatus {
+			if netStatus.MACAddress != "" {
+				macAddress = netStatus.MACAddress
+			}
+			if netStatus.Interface != "" {
+				interfaceName = netStatus.Interface
+			}
+		}
+
+		// 如果 NetworkStatus 中没有 MAC 地址，尝试从现有 VMI 获取
+		if macAddress == "" && hasStatus {
+			vmiName := fmt.Sprintf("%s-vm", vmp.Name)
+			vmi := &kubevirtv1.VirtualMachineInstance{}
+			key := client.ObjectKey{Namespace: vmp.Namespace, Name: vmiName}
+			if err := c.Get(ctx, key, vmi); err == nil {
+				for _, iface := range vmi.Status.Interfaces {
+					if iface.Name == net.Name {
+						if iface.MAC != "" {
+							macAddress = iface.MAC
+						}
+						break
+					}
+				}
+			}
+		}
+
+		// 确定接口标识符
+		if interfaceName == "" {
+			interfaceName = fmt.Sprintf("eth%d", multusInterfaceIndex)
+		}
+
+		networkConfig.WriteString(fmt.Sprintf("    %s:\n", interfaceName))
+
+		if macAddress != "" {
+			// 使用 MAC 地址匹配（最可靠）
+			networkConfig.WriteString("      match:\n")
+			networkConfig.WriteString(fmt.Sprintf("        macaddress: %s\n", macAddress))
+			networkConfig.WriteString(fmt.Sprintf("      set-name: %s\n", interfaceName))
+		} else {
+			// 如果没有 MAC 地址，尝试使用驱动程序或索引匹配（Netplan 允许）
+			logger.V(1).Info("MAC address not available for network, using index-based matching", "network", net.Name, "interface", interfaceName)
+			// 注意：在没有 MAC 的情况下，Netplan 很难精确匹配 Multus 接口
+			// 这里我们依赖 KubeVirt 默认的接口顺序
+		}
+
+		// 启用 DHCP
+		networkConfig.WriteString("      dhcp4: true\n")
+		networkConfig.WriteString("      dhcp6: false\n")
+
+		// 增加 Multus 接口索引
+		multusInterfaceIndex++
 	}
 
-	return cloudInit
+	return networkConfig.String()
 }
 
 // buildCloudInitNetworkData 构建 Cloud-Init 网络配置数据（使用 NetworkData 字段）

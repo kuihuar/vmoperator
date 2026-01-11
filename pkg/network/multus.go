@@ -156,6 +156,7 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 		VLAN                      *int                   `json:"vlan,omitempty"`
 		IPAM                      map[string]interface{} `json:"ipam,omitempty"`
 		DisableContainerInterface bool                   `json:"disableContainerInterface,omitempty"`
+		Macspoofchk               bool                   `json:"macspoofchk,omitempty"`
 	}
 
 	// 只支持 bridge 类型（根据 KubeVirt 官方文档，macvlan/ipvlan 不能用于 bridge interfaces）
@@ -169,6 +170,7 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 		CNIVersion:                "0.3.1",
 		Type:                      "bridge", // 强制使用 bridge CNI
 		DisableContainerInterface: true,     // KubeVirt 需要，直接将桥接连接到 VM，不创建容器接口
+		Macspoofchk:               false,     // 暂不启用 MAC 地址欺骗检查（安全功能）
 	}
 
 	// 配置桥接名称
