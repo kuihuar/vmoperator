@@ -143,11 +143,6 @@ func (in *NetworkConfig) DeepCopyInto(out *NetworkConfig) {
 		*out = new(int)
 		**out = **in
 	}
-	if in.NodeIP != nil {
-		in, out := &in.NodeIP, &out.NodeIP
-		*out = new(string)
-		**out = **in
-	}
 	if in.IPConfig != nil {
 		in, out := &in.IPConfig, &out.IPConfig
 		*out = new(IPConfigSpec)

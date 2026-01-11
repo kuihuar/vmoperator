@@ -129,17 +129,16 @@ type NetworkConfig struct {
 	// +optional
 	PhysicalInterface string `json:"physicalInterface,omitempty"`
 
-	// NodeIP is the IP address of the physical interface on the node
-	// This IP will be migrated to the bridge when creating the bridge
-	// Format: "192.168.0.121/24"
-	// Required for bridge and ovs network types to preserve node network connectivity
-	// If not specified, the operator will try to get it from NodeNetworkState
-	// +optional
-	NodeIP *string `json:"nodeIP,omitempty"`
-
 	// IPConfig defines the IP configuration for this network
 	// +optional
 	IPConfig *IPConfigSpec `json:"ipConfig,omitempty"`
+
+	// Primary indicates if this network is the primary/default network
+	// If true and this is a Multus network (Type is set and NADName is specified),
+	// it will be used as the primary network provider instead of the default Pod network.
+	// Only one network can be marked as primary.
+	// +optional
+	Primary bool `json:"primary,omitempty"`
 }
 
 // IPConfigSpec defines IP configuration for a network interface
@@ -320,6 +319,12 @@ type NetworkStatus struct {
 	// NADName is the name of the NetworkAttachmentDefinition used
 	// +optional
 	NADName string `json:"nadName,omitempty"`
+
+	// Primary indicates if this network is the primary/default network
+	// If true and this is a Multus network (NADName is set),
+	// it will be used as the primary network provider instead of the default Pod network.
+	// +optional
+	Primary bool `json:"primary,omitempty"`
 }
 
 // VolumeStatus represents the status of a storage volume

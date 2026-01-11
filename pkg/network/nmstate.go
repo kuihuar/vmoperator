@@ -102,51 +102,67 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 		return fmt.Errorf("VLAN configuration is not supported yet, network: %s, vlanId: %d", netCfg.Name, *netCfg.VLANID)
 	}
 
-	// 自动获取物理网卡的 IP 配置信息（IP 地址和配置方式：DHCP 或静态）
-	ipInfo, err := getIPConfigFromNodeNetworkState(ctx, c, physicalInterface)
-	if err != nil {
-		logger.Error(err, "failed to get IP config from NodeNetworkState", "interface", physicalInterface, "network", netCfg.Name)
-		return fmt.Errorf("failed to get IP config from NodeNetworkState for interface %s: %w", physicalInterface, err)
+	// 检查 IP 配置：目前只支持 DHCP
+	if netCfg.IPConfig != nil && netCfg.IPConfig.Mode != "" && netCfg.IPConfig.Mode != "dhcp" {
+		return fmt.Errorf("only DHCP mode is supported for bridge network currently, network: %s, mode: %s", netCfg.Name, netCfg.IPConfig.Mode)
 	}
 
-	// 验证实际 IP 地址格式（如果不是 DHCP 模式，必须有 IP 地址）
-	useDHCP := ipInfo.useDHCP
-	if !useDHCP {
-		if ipInfo.ipAddress == "" {
-			logger.Error(nil, "static IP mode but no IP address found in NodeNetworkState", "network", netCfg.Name, "interface", physicalInterface)
-			return fmt.Errorf("static IP mode but no IP address found in NodeNetworkState for interface %s", physicalInterface)
-		}
-		_, _, err := parseIPAddress(ipInfo.ipAddress)
-		if err != nil {
-			logger.Error(err, "invalid IP address format from NodeNetworkState", "ipAddress", ipInfo.ipAddress, "network", netCfg.Name, "interface", physicalInterface)
-			return fmt.Errorf("invalid IP address format from NodeNetworkState: %s, error: %w", ipInfo.ipAddress, err)
-		}
-	}
-	logger.Info("Auto-detected IP config from NodeNetworkState", "ipAddress", ipInfo.ipAddress, "useDHCP", ipInfo.useDHCP, "interface", physicalInterface)
-
-	// 构建 NodeNetworkConfigurationPolicy
-	// 注意：NodeNetworkConfigurationPolicy 是集群级别资源，没有命名空间
-	nncp := &unstructured.Unstructured{}
-	nncp.SetGroupVersionKind(schema.GroupVersionKind{
+	// 检查策略是否存在
+	key := client.ObjectKey{Name: policyName}
+	existingNNCP := &unstructured.Unstructured{}
+	existingNNCP.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "nmstate.io",
 		Version: "v1",
 		Kind:    "NodeNetworkConfigurationPolicy",
 	})
-	nncp.SetName(policyName)
-	// NodeNetworkConfigurationPolicy 是集群级别资源，不设置命名空间
+	err := c.Get(ctx, key, existingNNCP)
+	policyExists := err == nil && !errors.IsNotFound(err)
 
-	// 构建 desiredState
-	desiredState := map[string]interface{}{
-		"interfaces": []interface{}{},
+	// 目前只支持 DHCP，直接使用 DHCP 配置
+	logger.Info("Using DHCP for bridge IP configuration", "bridge", bridgeName)
+
+	// 构建策略的 desiredState（只使用 DHCP）
+	desiredState, err := buildBridgeDesiredState(bridgeName, physicalInterface)
+	if err != nil {
+		return fmt.Errorf("failed to build desiredState: %w", err)
 	}
 
-	interfaces := []interface{}{}
+	// 创建或更新策略（复用之前检查的 existingNNCP，如果策略已存在）
+	var nncp *unstructured.Unstructured
+	if policyExists {
+		// 策略已存在，使用 existingNNCP
+		nncp = existingNNCP
+		if err := unstructured.SetNestedField(nncp.Object, desiredState, "spec", "desiredState"); err != nil {
+			return fmt.Errorf("failed to set desiredState: %w", err)
+		}
+		logger.V(1).Info("Updating NodeNetworkConfigurationPolicy", "name", policyName)
+		if err := c.Update(ctx, nncp); err != nil {
+			return fmt.Errorf("failed to update NodeNetworkConfigurationPolicy: %w", err)
+		}
+	} else {
+		// 策略不存在，创建新的对象
+		nncp = &unstructured.Unstructured{}
+		nncp.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "nmstate.io",
+			Version: "v1",
+			Kind:    "NodeNetworkConfigurationPolicy",
+		})
+		nncp.SetName(policyName)
+		if err := unstructured.SetNestedField(nncp.Object, desiredState, "spec", "desiredState"); err != nil {
+			return fmt.Errorf("failed to set desiredState: %w", err)
+		}
+		logger.Info("Creating NodeNetworkConfigurationPolicy", "name", policyName, "bridge", bridgeName)
+		if err := c.Create(ctx, nncp); err != nil {
+			return fmt.Errorf("failed to create NodeNetworkConfigurationPolicy: %w", err)
+		}
+	}
 
-	// 重要：NMState 采用声明式配置，必须明确指定每个接口的状态
-	// 当物理网卡被添加到桥接时，如果不明确配置，NMState 会移除物理网卡的 IP
-	// 因此需要：
-	// 1. 在桥接上配置节点 IP（从 NodeNetworkState 自动检测）
-	// 2. 明确指定物理网卡禁用 IP（IP 在桥接上）
+	return nil
+}
+
+// buildBridgeDesiredState 构建桥接策略的 desiredState（目前只支持 DHCP）
+func buildBridgeDesiredState(bridgeName, physicalInterface string) (map[string]interface{}, error) {
+	interfaces := []interface{}{}
 
 	// 构建桥接接口配置
 	bridgeInterface := map[string]interface{}{
@@ -165,89 +181,28 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 				},
 			},
 		},
-	}
-
-	// 在桥接上配置节点 IP（从 NodeNetworkState 自动检测）
-	// 根据物理网卡的配置方式（DHCP 或静态）来配置桥接
-	if useDHCP {
-		// 物理网卡使用 DHCP，桥接也使用 DHCP
-		bridgeInterface["ipv4"] = map[string]interface{}{
+		// 在桥接上配置 IP（使用 DHCP）
+		"ipv4": map[string]interface{}{
 			"enabled": true,
 			"dhcp":    true,
-		}
-		logger.Info("Configuring bridge with DHCP (matching physical interface)", "bridge", bridgeName, "physicalInterface", physicalInterface)
-	} else {
-		// 物理网卡使用静态 IP，桥接也使用静态 IP
-		ip, prefixLen, err := parseIPAddress(ipInfo.ipAddress)
-		if err != nil {
-			logger.Error(err, "failed to parse IP address from NodeNetworkState", "ipAddress", ipInfo.ipAddress, "network", netCfg.Name)
-			return fmt.Errorf("invalid IP address format from NodeNetworkState: %s, error: %w", ipInfo.ipAddress, err)
-		}
-
-		bridgeInterface["ipv4"] = map[string]interface{}{
-			"enabled": true,
-			"dhcp":    false,
-			"address": []interface{}{
-				map[string]interface{}{
-					"ip":            ip,
-					"prefix-length": int64(prefixLen), // 转换为 int64，unstructured 需要可深度复制的类型
-				},
-			},
-		}
-		logger.Info("Configuring bridge with static IP (matching physical interface)", "bridge", bridgeName, "ip", ip, "prefixLen", prefixLen, "physicalInterface", physicalInterface)
+		},
 	}
-
 	interfaces = append(interfaces, bridgeInterface)
 
-	// 明确指定物理网卡的状态：禁用 IP（IP 在桥接上）
+	// 明确指定物理网卡禁用 IP（IP 在桥接上）
 	physicalInterfaceConfig := map[string]interface{}{
 		"name":  physicalInterface,
 		"type":  "ethernet",
 		"state": "up",
 		"ipv4": map[string]interface{}{
-			"enabled": false, // 禁用物理网卡的 IP，IP 在桥接上
+			"enabled": false,
 		},
 	}
 	interfaces = append(interfaces, physicalInterfaceConfig)
 
-	desiredState["interfaces"] = interfaces
-
-	// 设置 spec
-	if err := unstructured.SetNestedField(nncp.Object, desiredState, "spec", "desiredState"); err != nil {
-		return fmt.Errorf("failed to set desiredState: %w", err)
-	}
-
-	// 尝试获取现有的策略
-	existingNNCP := &unstructured.Unstructured{}
-	existingNNCP.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "nmstate.io",
-		Version: "v1",
-		Kind:    "NodeNetworkConfigurationPolicy",
-	})
-	// NodeNetworkConfigurationPolicy 是集群级别资源，没有命名空间
-	key := client.ObjectKey{Name: policyName}
-
-	err = c.Get(ctx, key, existingNNCP)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// 创建新策略
-			logger.Info("Creating NodeNetworkConfigurationPolicy", "name", policyName, "bridge", bridgeName)
-			if err := c.Create(ctx, nncp); err != nil {
-				return fmt.Errorf("failed to create NodeNetworkConfigurationPolicy: %w", err)
-			}
-		} else {
-			return fmt.Errorf("failed to get NodeNetworkConfigurationPolicy: %w", err)
-		}
-	} else {
-		// 更新现有策略
-		logger.V(1).Info("Updating NodeNetworkConfigurationPolicy", "name", policyName)
-		existingNNCP.Object["spec"] = nncp.Object["spec"]
-		if err := c.Update(ctx, existingNNCP); err != nil {
-			return fmt.Errorf("failed to update NodeNetworkConfigurationPolicy: %w", err)
-		}
-	}
-
-	return nil
+	return map[string]interface{}{
+		"interfaces": interfaces,
+	}, nil
 }
 
 // parseIPAddress 解析 IP 地址和前缀长度
@@ -269,29 +224,54 @@ type ipConfigInfo struct {
 	useDHCP   bool   // 是否使用 DHCP
 }
 
-// getIPConfigFromNodeNetworkState 从 NodeNetworkState 获取物理接口的 IP 配置信息（IP 地址和配置方式）
+// getIPConfigFromNodeNetworkState 从 NodeNetworkState 获取桥接接口的 IP 配置信息（IP 地址和配置方式）
+// 注意：物理接口没有 IP（ipv4.enabled: false），IP 在桥接上，所以只查找桥接接口的 IP 配置
+// 参数 bridgeName 是桥接名称（如 "br-external"）
 // 返回: IP 配置信息（包括 IP 地址和是否使用 DHCP）
-func getIPConfigFromNodeNetworkState(ctx context.Context, c client.Client, interfaceName string) (*ipConfigInfo, error) {
-	// 获取所有 NodeNetworkState 资源
-	nodeNetworkStateList := &unstructured.UnstructuredList{}
-	nodeNetworkStateList.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "nmstate.io",
-		Version: "v1beta1",
-		Kind:    "NodeNetworkStateList",
+func getIPConfigFromNodeNetworkState(ctx context.Context, c client.Client, bridgeName string) (*ipConfigInfo, error) {
+	// 首先尝试列出所有节点，然后对每个节点使用 Get
+	// 这样可以避免使用 List 获取所有 NodeNetworkState（List 操作在 API Server 响应慢时会超时）
+	nodeList := &unstructured.UnstructuredList{}
+	nodeList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "",
+		Version: "v1",
+		Kind:    "NodeList",
 	})
 
-	err := c.List(ctx, nodeNetworkStateList)
+	err := c.List(ctx, nodeList)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list NodeNetworkState: %w", err)
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	// 遍历所有节点，查找接口的 IP 配置
-	for _, item := range nodeNetworkStateList.Items {
+	// 遍历所有节点，使用 Get 获取每个节点的 NodeNetworkState
+	for _, node := range nodeList.Items {
+		nodeName, found, err := unstructured.NestedString(node.Object, "metadata", "name")
+		if err != nil || !found || nodeName == "" {
+			continue
+		}
+
+		// 使用 Get 获取特定节点的 NodeNetworkState（比 List 所有 NodeNetworkState 更快）
+		nodeNetworkState := &unstructured.Unstructured{}
+		nodeNetworkState.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "nmstate.io",
+			Version: "v1beta1",
+			Kind:    "NodeNetworkState",
+		})
+		key := client.ObjectKey{Name: nodeName}
+
+		err = c.Get(ctx, key, nodeNetworkState)
+		if err != nil {
+			// 如果某个节点的 NodeNetworkState 不存在，继续查找下一个节点
+			continue
+		}
+
+		item := nodeNetworkState
 		interfaces, found, err := unstructured.NestedSlice(item.Object, "status", "currentState", "interfaces")
 		if err != nil || !found {
 			continue
 		}
 
+		// 查找桥接接口（类型为 linux-bridge 或 ovs-bridge）
 		for _, iface := range interfaces {
 			ifaceMap, ok := iface.(map[string]interface{})
 			if !ok {
@@ -299,11 +279,17 @@ func getIPConfigFromNodeNetworkState(ctx context.Context, c client.Client, inter
 			}
 
 			name, _ := ifaceMap["name"].(string)
-			if name != interfaceName {
+			if name != bridgeName {
 				continue
 			}
 
-			// 找到目标接口，获取 IP 配置
+			// 检查是否是桥接接口
+			ifaceType, _ := ifaceMap["type"].(string)
+			if ifaceType != "linux-bridge" && ifaceType != "ovs-bridge" {
+				continue
+			}
+
+			// 找到了桥接接口，获取 IP 配置
 			ipv4, found, err := unstructured.NestedMap(ifaceMap, "ipv4")
 			if err != nil || !found {
 				continue
@@ -346,5 +332,5 @@ func getIPConfigFromNodeNetworkState(ctx context.Context, c client.Client, inter
 		}
 	}
 
-	return nil, fmt.Errorf("interface %s not found or has no IP configuration in NodeNetworkState", interfaceName)
+	return nil, fmt.Errorf("bridge %s not found or has no IP configuration in NodeNetworkState", bridgeName)
 }

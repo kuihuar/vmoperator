@@ -212,28 +212,47 @@ func buildDisks(volumes []vmv1alpha1.VolumeStatus) []kubevirtv1.Disk {
 }
 
 // buildNetworks 构建网络列表
+// 支持两种模式：
+// 1. 标准模式（默认）：Pod 网络作为主网络，Multus 网络作为次要网络（Secondary network）
+// 2. Multus 作为主网络：当有网络标记为 Primary=true 且是 Multus 网络时，使用 Multus 作为主网络提供者
 func buildNetworks(networks []vmv1alpha1.NetworkStatus) []kubevirtv1.Network {
 	netList := make([]kubevirtv1.Network, 0, len(networks)+1)
 
-	// 默认网络（Pod 网络）
-	netList = append(netList, kubevirtv1.Network{
-		Name: "default",
-		NetworkSource: kubevirtv1.NetworkSource{
-			Pod: &kubevirtv1.PodNetwork{},
-		},
-	})
+	// 检查是否有标记为主网络的 Multus 网络
+	var primaryMultusNetwork *vmv1alpha1.NetworkStatus
+	for i := range networks {
+		if networks[i].Primary && networks[i].NADName != "" {
+			primaryMultusNetwork = &networks[i]
+			break
+		}
+	}
 
-	// Multus 网络
+	if primaryMultusNetwork == nil {
+		// 标准模式：Pod 网络作为主网络（Default Kubernetes network）
+		netList = append(netList, kubevirtv1.Network{
+			Name: "default",
+			NetworkSource: kubevirtv1.NetworkSource{
+				Pod: &kubevirtv1.PodNetwork{},
+			},
+		})
+	}
+
+	// Multus 网络（次要网络或主网络）
 	// 注意：Network 的 Name 必须与 Interface 的 Name 匹配（KubeVirt 要求）
 	// NetworkName 用于引用 NetworkAttachmentDefinition
 	for _, net := range networks {
 		if net.NADName != "" {
+			multusNet := &kubevirtv1.MultusNetwork{
+				NetworkName: net.NADName, // NAD 名称用于 Multus 引用
+			}
+			// 如果这是主网络，设置 default: true（Multus as primary network provider）
+			if net.Primary {
+				multusNet.Default = true
+			}
 			netList = append(netList, kubevirtv1.Network{
 				Name: net.Name, // 使用网络配置中的名称，与 Interface 匹配
 				NetworkSource: kubevirtv1.NetworkSource{
-					Multus: &kubevirtv1.MultusNetwork{
-						NetworkName: net.NADName, // NAD 名称用于 Multus 引用
-					},
+					Multus: multusNet,
 				},
 			})
 		}
@@ -244,18 +263,32 @@ func buildNetworks(networks []vmv1alpha1.NetworkStatus) []kubevirtv1.Network {
 
 // buildInterfaces 构建网络接口列表
 // 每个接口必须引用一个 network 名称
+// 支持两种模式：
+// 1. 标准模式：Pod 网络接口（masquerade）作为主接口，Multus 网络接口（bridge）作为次要接口
+// 2. Multus 作为主网络：Multus 网络接口作为主接口，不添加 Pod 网络接口
 func buildInterfaces(networks []vmv1alpha1.NetworkStatus) []kubevirtv1.Interface {
 	interfaceList := make([]kubevirtv1.Interface, 0, len(networks)+1)
 
-	// 默认网络接口（Pod 网络）
-	interfaceList = append(interfaceList, kubevirtv1.Interface{
-		Name: "default",
-		InterfaceBindingMethod: kubevirtv1.InterfaceBindingMethod{
-			Masquerade: &kubevirtv1.InterfaceMasquerade{},
-		},
-	})
+	// 检查是否有标记为主网络的 Multus 网络
+	hasPrimaryMultus := false
+	for _, net := range networks {
+		if net.Primary && net.NADName != "" {
+			hasPrimaryMultus = true
+			break
+		}
+	}
 
-	// Multus 网络接口
+	if !hasPrimaryMultus {
+		// 标准模式：Pod 网络接口作为主接口（Default Kubernetes network）
+		interfaceList = append(interfaceList, kubevirtv1.Interface{
+			Name: "default",
+			InterfaceBindingMethod: kubevirtv1.InterfaceBindingMethod{
+				Masquerade: &kubevirtv1.InterfaceMasquerade{},
+			},
+		})
+	}
+
+	// Multus 网络接口（次要网络或主网络）
 	// 注意：Interface 的 Name 必须与 Network 的 Name 匹配（KubeVirt 要求）
 	for _, net := range networks {
 		if net.NADName != "" {
