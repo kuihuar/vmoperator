@@ -194,27 +194,27 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 			// 获取子网范围
 			subnet := ipNet.String()
 
-				// 使用 host-local IPAM，设置 rangeStart 和 rangeEnd 为同一个 IP
-				// 这样可以确保分配固定的 IP 地址
-				ipam := map[string]interface{}{
-					"type":       "host-local",
-					"subnet":     subnet,
-					"rangeStart": ip.String(),
-					"rangeEnd":   ip.String(),
-				}
-
-				// 如果指定了网关，注入到 IPAM 路由中
-				if netCfg.IPConfig.Gateway != nil {
-					ipam["routes"] = []map[string]interface{}{
-						{
-							"dst": "0.0.0.0/0",
-							"gw":  *netCfg.IPConfig.Gateway,
-						},
-					}
-				}
-				cfg.IPAM = ipam
+			// 使用 host-local IPAM，设置 rangeStart 和 rangeEnd 为同一个 IP
+			// 这样可以确保分配固定的 IP 地址
+			ipam := map[string]interface{}{
+				"type":       "host-local",
+				"subnet":     subnet,
+				"rangeStart": ip.String(),
+				"rangeEnd":   ip.String(),
 			}
+
+			// 如果指定了网关，注入到 IPAM 路由中
+			if netCfg.IPConfig.Gateway != nil {
+				ipam["routes"] = []map[string]interface{}{
+					{
+						"dst": "0.0.0.0/0",
+						"gw":  *netCfg.IPConfig.Gateway,
+					},
+				}
+			}
+			cfg.IPAM = ipam
 		}
+	}
 
 	data, err := json.Marshal(cfg)
 	if err != nil {

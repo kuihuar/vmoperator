@@ -96,6 +96,7 @@ func buildVirtualMachine(ctx context.Context, c client.Client, vmp *vmv1alpha1.W
 
 // buildVMSpec 构建 VirtualMachine spec
 func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, networks []vmv1alpha1.NetworkStatus, volumes []vmv1alpha1.VolumeStatus) kubevirtv1.VirtualMachineSpec {
+	logger := log.FromContext(ctx)
 	// 确定是否运行
 	autoStart := true
 	if vmp.Spec.StartStrategy != nil {
@@ -140,6 +141,7 @@ func buildVMSpec(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wukong, n
 		// 并将其作为 VM 的数据源。KubeVirt 支持通过 VirtualMachineRestore 资源来实现。
 		// 原型演示：记录日志并设置相关标志
 		logger.Info("VM will be restored from snapshot", "snapshot", vmp.Spec.RestoreFromSnapshot)
+
 	}
 
 	// 添加 Cloud-Init 配置（如果有）
@@ -447,47 +449,47 @@ func buildCloudInitData(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wu
 				}
 			}
 
-				// 生成网络配置
-				// 确定接口标识符
-				if interfaceName == "" {
-					interfaceName = fmt.Sprintf("eth%d", multusInterfaceIndex)
-				}
+			// 生成网络配置
+			// 确定接口标识符
+			if interfaceName == "" {
+				interfaceName = fmt.Sprintf("eth%d", multusInterfaceIndex)
+			}
 
-				cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
-				
-				if macAddress != "" {
-					// 使用 MAC 地址匹配（最可靠）
-					cloudInit += fmt.Sprintf("      match:\n")
-					cloudInit += fmt.Sprintf("        macaddress: %s\n", macAddress)
-					cloudInit += fmt.Sprintf("      set-name: %s\n", interfaceName)
-				} else {
-					// 如果没有 MAC 地址，尝试使用驱动程序或索引匹配（Netplan 允许）
-					logger.V(1).Info("MAC address not available for network, using index-based matching", "network", net.Name, "interface", interfaceName)
-					// 注意：在没有 MAC 的情况下，Netplan 很难精确匹配 Multus 接口
-					// 这里我们依赖 KubeVirt 默认的接口顺序
-				}
+			cloudInit += fmt.Sprintf("    %s:\n", interfaceName)
 
-				if net.IPConfig.Mode == "static" && net.IPConfig.Address != nil {
-					// 禁用 DHCP，使用静态 IP
-					cloudInit += "      dhcp4: false\n"
-					cloudInit += "      dhcp6: false\n"
-					cloudInit += "      addresses:\n"
-					cloudInit += fmt.Sprintf("        - %s\n", *net.IPConfig.Address)
-					if net.IPConfig.Gateway != nil {
-						cloudInit += fmt.Sprintf("      gateway4: %s\n", *net.IPConfig.Gateway)
-					}
-					if len(net.IPConfig.DNSServers) > 0 {
-						cloudInit += "      nameservers:\n"
-						cloudInit += "        addresses:\n"
-						for _, dns := range net.IPConfig.DNSServers {
-							cloudInit += fmt.Sprintf("          - %s\n", dns)
-						}
-					}
-				} else if net.IPConfig.Mode == "dhcp" {
-					// 启用 DHCP
-					cloudInit += "      dhcp4: true\n"
-					cloudInit += "      dhcp6: false\n"
+			if macAddress != "" {
+				// 使用 MAC 地址匹配（最可靠）
+				cloudInit += fmt.Sprintf("      match:\n")
+				cloudInit += fmt.Sprintf("        macaddress: %s\n", macAddress)
+				cloudInit += fmt.Sprintf("      set-name: %s\n", interfaceName)
+			} else {
+				// 如果没有 MAC 地址，尝试使用驱动程序或索引匹配（Netplan 允许）
+				logger.V(1).Info("MAC address not available for network, using index-based matching", "network", net.Name, "interface", interfaceName)
+				// 注意：在没有 MAC 的情况下，Netplan 很难精确匹配 Multus 接口
+				// 这里我们依赖 KubeVirt 默认的接口顺序
+			}
+
+			if net.IPConfig.Mode == "static" && net.IPConfig.Address != nil {
+				// 禁用 DHCP，使用静态 IP
+				cloudInit += "      dhcp4: false\n"
+				cloudInit += "      dhcp6: false\n"
+				cloudInit += "      addresses:\n"
+				cloudInit += fmt.Sprintf("        - %s\n", *net.IPConfig.Address)
+				if net.IPConfig.Gateway != nil {
+					cloudInit += fmt.Sprintf("      gateway4: %s\n", *net.IPConfig.Gateway)
 				}
+				if len(net.IPConfig.DNSServers) > 0 {
+					cloudInit += "      nameservers:\n"
+					cloudInit += "        addresses:\n"
+					for _, dns := range net.IPConfig.DNSServers {
+						cloudInit += fmt.Sprintf("          - %s\n", dns)
+					}
+				}
+			} else if net.IPConfig.Mode == "dhcp" {
+				// 启用 DHCP
+				cloudInit += "      dhcp4: true\n"
+				cloudInit += "      dhcp6: false\n"
+			}
 
 			// 增加 Multus 接口索引
 			multusInterfaceIndex++

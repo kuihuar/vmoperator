@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -28,7 +28,10 @@ func (r *WukongSnapshotReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// 1. 获取 WukongSnapshot
 	var snapshot vmv1alpha1.WukongSnapshot
 	if err := r.Get(ctx, req.NamespacedName, &snapshot); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
 	}
 
 	// 2. 如果已经成功，不再处理
@@ -68,7 +71,7 @@ func (r *WukongSnapshotReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	if snapshot.Status.SnapshotName == "" {
 		if err := r.Create(ctx, kvSnapshot); err != nil {
-			if !errors.IsAlreadyExists(err) {
+			if !apierrors.IsAlreadyExists(err) {
 				return ctrl.Result{}, err
 			}
 		}

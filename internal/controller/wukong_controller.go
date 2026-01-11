@@ -383,20 +383,27 @@ func (r *WukongReconciler) reconcileDelete(ctx context.Context, vmp *vmv1alpha1.
 			key := client.ObjectKey{Namespace: vmp.Namespace, Name: vol.PVCName}
 			if err := r.Get(ctx, key, pvc); err == nil {
 				logger.V(1).Info("PVC still exists, waiting for deletion", "name", vol.PVCName)
-				return ctrl.Result{RequeueAfter: time.Second * 2}, nil		// 3. 检查是否还有残留资源
-		// 如果 VM 还在，或者还有 DataVolume/PVC 没删完，不要移除 finalizer
-		// 上面的逻辑已经通过 RequeueAfter 确保了重试，这里做最后的安全检查
-		
-		// 4. 移除 finalizer
-		vmp.Finalizers = removeString(vmp.Finalizers, finalizerName)
-		if err := r.Update(ctx, vmp); err != nil {
-			logger.Error(err, "unable to remove finalizer")
-			return ctrl.Result{}, err
+				return ctrl.Result{RequeueAfter: time.Second * 2}, nil
+			}
 		}
-	
-		logger.Info("Successfully deleted Wukong and cleaned up resources", "name", vmp.Name)
-		return ctrl.Result{}, nil
-	}ateSpec 验证 Wukong spec 的有效性
+	}
+
+	// 3. 检查是否还有残留资源
+	// 如果 VM 还在，或者还有 DataVolume/PVC 没删完，不要移除 finalizer
+	// 上面的逻辑已经通过 RequeueAfter 确保了重试，这里做最后的安全检查
+
+	// 4. 移除 finalizer
+	vmp.Finalizers = removeString(vmp.Finalizers, finalizerName)
+	if err := r.Update(ctx, vmp); err != nil {
+		logger.Error(err, "unable to remove finalizer")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Successfully deleted Wukong and cleaned up resources", "name", vmp.Name)
+	return ctrl.Result{}, nil
+}
+
+// validateSpec 验证 Wukong spec 的有效性
 func (r *WukongReconciler) validateSpec(vmp *vmv1alpha1.Wukong) error {
 	// 验证 CPU
 	if vmp.Spec.CPU < 1 || vmp.Spec.CPU > 64 {

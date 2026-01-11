@@ -67,31 +67,31 @@ type WukongSpec struct {
 	// +optional
 	HighAvailability *HighAvailabilitySpec `json:"highAvailability,omitempty"`
 
-		// StartStrategy defines the start strategy for the virtual machine
-		// +optional
-		StartStrategy *StartStrategySpec `json:"startStrategy,omitempty"`
-	
-		// GPUs defines the GPU devices to be passed through to the virtual machine
-		// +optional
-		GPUs []GPUDevice `json:"gpus,omitempty"`
-	
-		// RestoreFromSnapshot specifies the name of a WukongSnapshot to restore from
-		// +optional
-		RestoreFromSnapshot string `json:"restoreFromSnapshot,omitempty"`
-	}
-	
-	// GPUDevice defines a GPU device for passthrough
-	type GPUDevice struct {
-		// Name is the logical name of the GPU device in the VM
-		// +kubebuilder:validation:Required
-		// +required
-		Name string `json:"name"`
-	
-		// DeviceName is the resource name of the GPU (e.g., "nvidia.com/gpu")
-		// +kubebuilder:validation:Required
-		// +required
-		DeviceName string `json:"deviceName"`
-	}
+	// StartStrategy defines the start strategy for the virtual machine
+	// +optional
+	StartStrategy *StartStrategySpec `json:"startStrategy,omitempty"`
+
+	// GPUs defines the GPU devices to be passed through to the virtual machine
+	// +optional
+	GPUs []GPUDevice `json:"gpus,omitempty"`
+
+	// RestoreFromSnapshot specifies the name of a WukongSnapshot to restore from
+	// +optional
+	RestoreFromSnapshot string `json:"restoreFromSnapshot,omitempty"`
+}
+
+// GPUDevice defines a GPU device for passthrough
+type GPUDevice struct {
+	// Name is the logical name of the GPU device in the VM
+	// +kubebuilder:validation:Required
+	// +required
+	Name string `json:"name"`
+
+	// DeviceName is the resource name of the GPU (e.g., "nvidia.com/gpu")
+	// +kubebuilder:validation:Required
+	// +required
+	DeviceName string `json:"deviceName"`
+}
 
 // NetworkConfig defines a network interface configuration
 type NetworkConfig struct {

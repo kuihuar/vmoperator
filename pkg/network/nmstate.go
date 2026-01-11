@@ -92,18 +92,18 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 		bridgeName = fmt.Sprintf("br-%s", netCfg.Name)
 	}
 
-		// 确定物理网卡（必须明确指定）
-		physicalInterface := netCfg.PhysicalInterface
-		if physicalInterface == "" {
-			return fmt.Errorf("physicalInterface is required for bridge/ovs network type, network: %s", netCfg.Name)
-		}
+	// 确定物理网卡（必须明确指定）
+	physicalInterface := netCfg.PhysicalInterface
+	if physicalInterface == "" {
+		return fmt.Errorf("physicalInterface is required for bridge/ovs network type, network: %s", netCfg.Name)
+	}
 
-		// 安全校验：如果配置了桥接但没有指定 NodeIP，且物理网卡不是 VLAN 基础接口，
-		// 则存在极高的节点失联风险。
-		if netCfg.VLANID == nil && (netCfg.NodeIP == nil || *netCfg.NodeIP == "") {
-			logger.Error(nil, "CRITICAL: Bridge configuration without NodeIP detected. This will likely cause node network isolation!", "network", netCfg.Name, "interface", physicalInterface)
-			return fmt.Errorf("nodeIP is mandatory for non-VLAN bridge on physical interface %s to prevent network loss", physicalInterface)
-		}
+	// 安全校验：如果配置了桥接但没有指定 NodeIP，且物理网卡不是 VLAN 基础接口，
+	// 则存在极高的节点失联风险。
+	if netCfg.VLANID == nil && (netCfg.NodeIP == nil || *netCfg.NodeIP == "") {
+		logger.Error(nil, "CRITICAL: Bridge configuration without NodeIP detected. This will likely cause node network isolation!", "network", netCfg.Name, "interface", physicalInterface)
+		return fmt.Errorf("nodeIP is mandatory for non-VLAN bridge on physical interface %s to prevent network loss", physicalInterface)
+	}
 
 	// 构建 NodeNetworkConfigurationPolicy
 	// 注意：NodeNetworkConfigurationPolicy 是集群级别资源，没有命名空间
