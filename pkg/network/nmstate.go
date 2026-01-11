@@ -227,7 +227,7 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 	// NodeNetworkConfigurationPolicy 是集群级别资源，没有命名空间
 	key := client.ObjectKey{Name: policyName}
 
-	err := c.Get(ctx, key, existingNNCP)
+	err = c.Get(ctx, key, existingNNCP)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// 创建新策略
@@ -279,40 +279,40 @@ func getIPConfigFromNodeNetworkState(ctx context.Context, c client.Client, inter
 		Version: "v1beta1",
 		Kind:    "NodeNetworkStateList",
 	})
-	
+
 	err := c.List(ctx, nodeNetworkStateList)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list NodeNetworkState: %w", err)
 	}
-	
+
 	// 遍历所有节点，查找接口的 IP 配置
 	for _, item := range nodeNetworkStateList.Items {
 		interfaces, found, err := unstructured.NestedSlice(item.Object, "status", "currentState", "interfaces")
 		if err != nil || !found {
 			continue
 		}
-		
+
 		for _, iface := range interfaces {
 			ifaceMap, ok := iface.(map[string]interface{})
 			if !ok {
 				continue
 			}
-			
+
 			name, _ := ifaceMap["name"].(string)
 			if name != interfaceName {
 				continue
 			}
-			
+
 			// 找到目标接口，获取 IP 配置
 			ipv4, found, err := unstructured.NestedMap(ifaceMap, "ipv4")
 			if err != nil || !found {
 				continue
 			}
-			
+
 			// 检查是否启用 DHCP
 			dhcp, found, _ := unstructured.NestedBool(ipv4, "dhcp")
 			useDHCP := found && dhcp
-			
+
 			// 获取 IP 地址（如果有）
 			addresses, found, err := unstructured.NestedSlice(ipv4, "address")
 			var ipAddress string
@@ -327,7 +327,7 @@ func getIPConfigFromNodeNetworkState(ctx context.Context, c client.Client, inter
 					}
 				}
 			}
-			
+
 			// 如果使用 DHCP，即使没有当前 IP 地址也返回（DHCP 会动态获取）
 			if useDHCP {
 				return &ipConfigInfo{
@@ -335,7 +335,7 @@ func getIPConfigFromNodeNetworkState(ctx context.Context, c client.Client, inter
 					useDHCP:   true,
 				}, nil
 			}
-			
+
 			// 如果是静态 IP，必须有 IP 地址
 			if ipAddress != "" {
 				return &ipConfigInfo{
@@ -345,6 +345,6 @@ func getIPConfigFromNodeNetworkState(ctx context.Context, c client.Client, inter
 			}
 		}
 	}
-	
+
 	return nil, fmt.Errorf("interface %s not found or has no IP configuration in NodeNetworkState", interfaceName)
 }
