@@ -61,7 +61,6 @@ spec:
       type: bridge
       bridgeName: "br-external"      # 可选，不指定则使用 br-external
       physicalInterface: "ens192"     # 物理网卡名称，NMState 会将此网卡作为桥接端口
-      # nodeIP 无需指定，系统会自动从 NodeNetworkState 获取实际的 IP 地址
       ipConfig:
         mode: dhcp  # 使用 DHCP 自动获取 IP 地址
         # DHCP 模式不需要指定 address、gateway 和 dnsServers

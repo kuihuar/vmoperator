@@ -44,7 +44,6 @@ spec:
     #   type: bridge
     #   bridgeName: "br-management"  # 可选，不指定则使用 br-management
     #   physicalInterface: "ens160"   # ⚠️ 必须指定物理网卡名称，根据实际情况修改！
-    #   nodeIP: "192.168.1.121/24"     # ⚠️ 节点 IP：原 ens160 的 IP，将迁移到桥接上，确保节点网络不中断
     #   ipConfig:
     #     mode: static
     #     address: "192.168.1.10/24"  # ⚠️ 示例 IP：请根据实际网络环境修改！确保在 ens160 的网段内（192.168.1.0/24）
@@ -65,7 +64,6 @@ spec:
       type: bridge
       bridgeName: "br-external"      # 可选，不指定则使用 br-external
       physicalInterface: "ens192"     # 物理网卡名称，NMState 会将此网卡作为桥接端口
-      # nodeIP 无需指定，系统会自动从 NodeNetworkState 获取实际的 IP 地址
       ipConfig:
         mode: static
         address: "192.168.0.200/24"  # ⚠️ 示例 IP：请根据实际网络环境修改！确保在 192.168.0.0/24 网段

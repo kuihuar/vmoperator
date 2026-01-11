@@ -104,44 +104,26 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 	}
 
 	// 自动获取物理网卡的 IP 配置信息（IP 地址和配置方式：DHCP 或静态）
-	var nodeIP string
-	var useDHCP bool
 	ipInfo, err := getIPConfigFromNodeNetworkState(ctx, c, physicalInterface)
 	if err != nil {
-		logger.Error(err, "failed to get IP config from NodeNetworkState", "interface", physicalInterface)
-		// 如果无法获取实际 IP，但用户指定了 nodeIP，使用用户指定的 IP（假设是静态）
-		if netCfg.NodeIP != nil && *netCfg.NodeIP != "" {
-			nodeIP = *netCfg.NodeIP
-			useDHCP = false // 用户指定了 IP，假设是静态
-			logger.Info("Using user-specified nodeIP (unable to verify from NodeNetworkState)", "nodeIP", nodeIP)
-		} else {
-			logger.Error(nil, "CRITICAL: Bridge configuration without NodeIP and unable to get actual IP. This will likely cause node network isolation!", "network", netCfg.Name, "interface", physicalInterface)
-			return fmt.Errorf("nodeIP is mandatory for bridge on physical interface %s to prevent network loss, and failed to get actual IP from NodeNetworkState: %w", physicalInterface, err)
+		logger.Error(err, "failed to get IP config from NodeNetworkState", "interface", physicalInterface, "network", netCfg.Name)
+		return fmt.Errorf("failed to get IP config from NodeNetworkState for interface %s: %w", physicalInterface, err)
+	}
+
+	// 验证实际 IP 地址格式（如果不是 DHCP 模式，必须有 IP 地址）
+	useDHCP := ipInfo.useDHCP
+	if !useDHCP {
+		if ipInfo.ipAddress == "" {
+			logger.Error(nil, "static IP mode but no IP address found in NodeNetworkState", "network", netCfg.Name, "interface", physicalInterface)
+			return fmt.Errorf("static IP mode but no IP address found in NodeNetworkState for interface %s", physicalInterface)
 		}
-	} else {
-		// 成功获取实际 IP 配置信息
-		useDHCP = ipInfo.useDHCP
-		if netCfg.NodeIP != nil && *netCfg.NodeIP != "" {
-			// 用户指定了 nodeIP，验证是否匹配（只比较 IP 部分，忽略前缀长度）
-			userIP, _, err1 := parseIPAddress(*netCfg.NodeIP)
-			actualIPOnly, _, err2 := parseIPAddress(ipInfo.ipAddress)
-			if err1 == nil && err2 == nil && userIP != actualIPOnly {
-				// IP 不匹配，使用实际的 IP 并记录警告
-				logger.Warn("User-specified nodeIP does not match actual IP, using actual IP to prevent network loss", "userIP", *netCfg.NodeIP, "actualIP", ipInfo.ipAddress, "interface", physicalInterface)
-				nodeIP = ipInfo.ipAddress
-				// 保持原有的 DHCP 配置方式
-			} else {
-				// IP 匹配或解析失败，使用用户指定的 IP（假设是静态）
-				nodeIP = *netCfg.NodeIP
-				useDHCP = false // 用户指定了 IP，假设是静态
-			}
-		} else {
-			// 用户没有指定 nodeIP，使用实际的 IP 配置
-			logger.Info("Auto-detected IP config from NodeNetworkState", "nodeIP", ipInfo.ipAddress, "useDHCP", ipInfo.useDHCP, "interface", physicalInterface)
-			nodeIP = ipInfo.ipAddress
-			// useDHCP 已经在上面设置了
+		_, _, err := parseIPAddress(ipInfo.ipAddress)
+		if err != nil {
+			logger.Error(err, "invalid IP address format from NodeNetworkState", "ipAddress", ipInfo.ipAddress, "network", netCfg.Name, "interface", physicalInterface)
+			return fmt.Errorf("invalid IP address format from NodeNetworkState: %s, error: %w", ipInfo.ipAddress, err)
 		}
 	}
+	logger.Info("Auto-detected IP config from NodeNetworkState", "ipAddress", ipInfo.ipAddress, "useDHCP", ipInfo.useDHCP, "interface", physicalInterface)
 
 	// 构建 NodeNetworkConfigurationPolicy
 	// 注意：NodeNetworkConfigurationPolicy 是集群级别资源，没有命名空间
@@ -164,7 +146,7 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 	// 重要：NMState 采用声明式配置，必须明确指定每个接口的状态
 	// 当物理网卡被添加到桥接时，如果不明确配置，NMState 会移除物理网卡的 IP
 	// 因此需要：
-	// 1. 在桥接上配置节点 IP（从 NodeIP 字段获取，或自动检测）
+	// 1. 在桥接上配置节点 IP（从 NodeNetworkState 自动检测）
 	// 2. 明确指定物理网卡禁用 IP（IP 在桥接上）
 
 	// 构建桥接接口配置
@@ -186,7 +168,7 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 		},
 	}
 
-	// 在桥接上配置节点 IP（从 nodeIP 变量获取，已经过验证或自动获取）
+	// 在桥接上配置节点 IP（从 NodeNetworkState 自动检测）
 	// 根据物理网卡的配置方式（DHCP 或静态）来配置桥接
 	if useDHCP {
 		// 物理网卡使用 DHCP，桥接也使用 DHCP
@@ -195,12 +177,12 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 			"dhcp":    true,
 		}
 		logger.Info("Configuring bridge with DHCP (matching physical interface)", "bridge", bridgeName, "physicalInterface", physicalInterface)
-	} else if nodeIP != "" {
+	} else {
 		// 物理网卡使用静态 IP，桥接也使用静态 IP
-		ip, prefixLen, err := parseIPAddress(nodeIP)
+		ip, prefixLen, err := parseIPAddress(ipInfo.ipAddress)
 		if err != nil {
-			logger.Error(err, "failed to parse nodeIP", "nodeIP", nodeIP, "network", netCfg.Name)
-			return fmt.Errorf("invalid nodeIP format: %s, expected format: 192.168.0.121/24, error: %w", nodeIP, err)
+			logger.Error(err, "failed to parse IP address from NodeNetworkState", "ipAddress", ipInfo.ipAddress, "network", netCfg.Name)
+			return fmt.Errorf("invalid IP address format from NodeNetworkState: %s, error: %w", ipInfo.ipAddress, err)
 		}
 
 		bridgeInterface["ipv4"] = map[string]interface{}{
@@ -214,10 +196,6 @@ func reconcileBridgePolicy(ctx context.Context, c client.Client, vmp *vmv1alpha1
 			},
 		}
 		logger.Info("Configuring bridge with static IP (matching physical interface)", "bridge", bridgeName, "ip", ip, "prefixLen", prefixLen, "physicalInterface", physicalInterface)
-	} else {
-		// 既没有 DHCP 也没有静态 IP，这是异常情况
-		logger.Error(nil, "No IP configuration available for bridge", "network", netCfg.Name, "physicalInterface", physicalInterface)
-		return fmt.Errorf("no IP configuration available for bridge %s on physical interface %s", bridgeName, physicalInterface)
 	}
 
 	interfaces = append(interfaces, bridgeInterface)
