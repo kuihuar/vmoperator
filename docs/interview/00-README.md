@@ -126,6 +126,19 @@
 89. **[21-API Service框架选择方案.md](./21-API Service框架选择方案.md)** - API Service 框架选择（Gin/Echo/Fiber/gRPC）
 90. **[22-流式数据传输方案详解.md](./22-流式数据传输方案详解.md)** - 流式数据传输方案（SSE/WebSocket/gRPC Stream）
 91. **[23-网关流式数据代理详解.md](./23-网关流式数据代理详解.md)** - 网关（Kong/Traefik）流式数据代理支持
+92. **[24-Electron桌面连接虚拟机原理.md](./24-Electron桌面连接虚拟机原理.md)** - Electron 访问 VM 的控制面/数据面路径与原理
+93. **[25-Linux底层相关知识.md](./25-Linux底层相关知识.md)** - 与 k3s/KubeVirt/Multus/Longhorn/CDI 相关的 Linux 内核与系统知识
+94. **[26-K8s资源创建流程（面试版）.md](./26-K8s资源创建流程（面试版）.md)** - K8s 资源从提交到 Running 的通用流程与项目映射
+
+### 升级方向与可观测性（面试补充）
+95. **[upgrade/00-README.md](./upgrade/00-README.md)** - 技术栈升级与 Golang 可观测性文档索引
+96. **[upgrade/01-Go与Kubernetes依赖升级.md](./upgrade/01-Go与Kubernetes依赖升级.md)** - Go / K8s 依赖对齐与升级检查
+97. **[upgrade/02-Controller-Runtime与Operator生态演进.md](./upgrade/02-Controller-Runtime与Operator生态演进.md)** - controller-runtime 与 Operator 生态
+98. **[upgrade/03-虚拟化与集群组件升级关注点.md](./upgrade/03-虚拟化与集群组件升级关注点.md)** - KubeVirt、CNI、存储与发行版升级
+99. **[upgrade/obs-01-Prometheus监控.md](./upgrade/obs-01-Prometheus监控.md)** - Prometheus 监控面试要点
+100. **[upgrade/obs-02-ElasticSearch日志.md](./upgrade/obs-02-ElasticSearch日志.md)** - Elasticsearch 日志与检索面试要点
+101. **[upgrade/obs-03-可观测性研发经验.md](./upgrade/obs-03-可观测性研发经验.md)** - 可观测性研发流程与排障经验
+102. **[upgrade/04-后续扩展主题分类.md](./upgrade/04-后续扩展主题分类.md)** - 升级/可观测性后续主题分类与成文建议
 
 ## 快速导航
 
