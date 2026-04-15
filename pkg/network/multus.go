@@ -32,7 +32,8 @@ func ReconcileNetworks(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wuk
 		// 跳过 default 网络，它使用 Pod 网络，不需要 Multus NAD
 		if netCfg.Name == "default" {
 			statuses = append(statuses, vmv1alpha1.NetworkStatus{
-				Name: netCfg.Name,
+				Name:    netCfg.Name,
+				Primary: netCfg.Primary,
 				// 不设置 NADName，表示使用默认 Pod 网络
 			})
 			continue
@@ -42,7 +43,8 @@ func ReconcileNetworks(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wuk
 		if netCfg.Type != "bridge" && netCfg.Type != "ovs" {
 			logger.Info("Skipping unsupported network type", "network", netCfg.Name, "type", netCfg.Type, "reason", "only bridge and ovs are supported for KubeVirt")
 			statuses = append(statuses, vmv1alpha1.NetworkStatus{
-				Name: netCfg.Name,
+				Name:    netCfg.Name,
+				Primary: netCfg.Primary,
 				// 不设置 NADName，表示不支持
 			})
 			continue
@@ -77,7 +79,8 @@ func ReconcileNetworks(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wuk
 					// Multus 未安装，使用默认 Pod 网络
 					logger.Info("Multus CNI not installed, using default Pod network", "network", netCfg.Name)
 					statuses = append(statuses, vmv1alpha1.NetworkStatus{
-						Name: netCfg.Name,
+						Name:    netCfg.Name,
+						Primary: netCfg.Primary,
 						// 不设置 NADName，表示使用默认网络
 					})
 					continue
@@ -115,7 +118,8 @@ func ReconcileNetworks(ctx context.Context, c client.Client, vmp *vmv1alpha1.Wuk
 		}
 
 		statuses = append(statuses, vmv1alpha1.NetworkStatus{
-			Name: netCfg.Name,
+			Name:    netCfg.Name,
+			Primary: netCfg.Primary,
 			// NADName 记录实际使用的 NAD 名称
 			NADName: nadName,
 			// Interface/IP/MAC 需要在 VM 运行后由 KubeVirt / guest-agent 填充，这里先留空
@@ -140,16 +144,19 @@ func checkMultusCRDExists(ctx context.Context, c client.Client) (bool, error) {
 }
 
 // buildCNIConfig 构造一个简单的 CNI 配置 JSON 字符串。
-// 这里仅作为原型示例，实际生产环境需要根据具体网络规划进行调整。
+// 参考：https://kubevirt.io/user-guide/network/interfaces_and_networks/#multus-as-primary-network-provider
+// 参考：https://kubevirt.io/2020/Multiple-Network-Attachments-with-bridge-CNI.html
 func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 	type baseConfig struct {
-		CNIVersion string                 `json:"cniVersion"`
-		Type       string                 `json:"type"`
-		Bridge     string                 `json:"bridge,omitempty"`
-		Master     string                 `json:"master,omitempty"`
-		Mode       string                 `json:"mode,omitempty"`
-		VLAN       *int                   `json:"vlan,omitempty"`
-		IPAM       map[string]interface{} `json:"ipam,omitempty"`
+		CNIVersion                string                 `json:"cniVersion"`
+		Type                      string                 `json:"type"`
+		Bridge                    string                 `json:"bridge,omitempty"`
+		Master                    string                 `json:"master,omitempty"`
+		Mode                      string                 `json:"mode,omitempty"`
+		VLAN                      *int                   `json:"vlan,omitempty"`
+		IPAM                      map[string]interface{} `json:"ipam,omitempty"`
+		DisableContainerInterface bool                   `json:"disableContainerInterface,omitempty"`
+		Macspoofchk               bool                   `json:"macspoofchk,omitempty"`
 	}
 
 	// 只支持 bridge 类型（根据 KubeVirt 官方文档，macvlan/ipvlan 不能用于 bridge interfaces）
@@ -160,8 +167,10 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 
 	// 强制使用 bridge CNI
 	cfg := baseConfig{
-		CNIVersion: "0.3.1",
-		Type:       "bridge", // 强制使用 bridge CNI
+		CNIVersion:                "0.3.1",
+		Type:                      "bridge", // 强制使用 bridge CNI
+		DisableContainerInterface: true,     // KubeVirt 需要，直接将桥接连接到 VM，不创建容器接口
+		Macspoofchk:               false,     // 暂不启用 MAC 地址欺骗检查（安全功能）
 	}
 
 	// 配置桥接名称
@@ -177,9 +186,10 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 	// 根据 IPConfig 选择 ipam 类型
 	if netCfg.IPConfig != nil {
 		if netCfg.IPConfig.Mode == "dhcp" {
-			cfg.IPAM = map[string]interface{}{
-				"type": "dhcp",
-			}
+			// 对于 DHCP 模式，不设置 IPAM
+			// Bridge CNI 不支持 DHCP IPAM（DHCP IPAM 是独立的 CNI 插件）
+			// VM 内部的 IP 将通过 Cloud-Init 的 DHCP 配置获取
+			// 不设置 IPAM，让接口在 VM 内部通过 DHCP 获取 IP
 		} else if netCfg.IPConfig.Mode == "static" && netCfg.IPConfig.Address != nil {
 			// bridge CNI 使用 host-local IPAM 配置静态 IP
 			// 解析 IP 地址和子网掩码
@@ -194,27 +204,27 @@ func buildCNIConfig(netCfg *vmv1alpha1.NetworkConfig) (string, error) {
 			// 获取子网范围
 			subnet := ipNet.String()
 
-				// 使用 host-local IPAM，设置 rangeStart 和 rangeEnd 为同一个 IP
-				// 这样可以确保分配固定的 IP 地址
-				ipam := map[string]interface{}{
-					"type":       "host-local",
-					"subnet":     subnet,
-					"rangeStart": ip.String(),
-					"rangeEnd":   ip.String(),
-				}
-
-				// 如果指定了网关，注入到 IPAM 路由中
-				if netCfg.IPConfig.Gateway != nil {
-					ipam["routes"] = []map[string]interface{}{
-						{
-							"dst": "0.0.0.0/0",
-							"gw":  *netCfg.IPConfig.Gateway,
-						},
-					}
-				}
-				cfg.IPAM = ipam
+			// 使用 host-local IPAM，设置 rangeStart 和 rangeEnd 为同一个 IP
+			// 这样可以确保分配固定的 IP 地址
+			ipam := map[string]interface{}{
+				"type":       "host-local",
+				"subnet":     subnet,
+				"rangeStart": ip.String(),
+				"rangeEnd":   ip.String(),
 			}
+
+			// 如果指定了网关，注入到 IPAM 路由中
+			if netCfg.IPConfig.Gateway != nil {
+				ipam["routes"] = []map[string]interface{}{
+					{
+						"dst": "0.0.0.0/0",
+						"gw":  *netCfg.IPConfig.Gateway,
+					},
+				}
+			}
+			cfg.IPAM = ipam
 		}
+	}
 
 	data, err := json.Marshal(cfg)
 	if err != nil {

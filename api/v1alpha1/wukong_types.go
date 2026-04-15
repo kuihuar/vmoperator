@@ -67,31 +67,31 @@ type WukongSpec struct {
 	// +optional
 	HighAvailability *HighAvailabilitySpec `json:"highAvailability,omitempty"`
 
-		// StartStrategy defines the start strategy for the virtual machine
-		// +optional
-		StartStrategy *StartStrategySpec `json:"startStrategy,omitempty"`
-	
-		// GPUs defines the GPU devices to be passed through to the virtual machine
-		// +optional
-		GPUs []GPUDevice `json:"gpus,omitempty"`
-	
-		// RestoreFromSnapshot specifies the name of a WukongSnapshot to restore from
-		// +optional
-		RestoreFromSnapshot string `json:"restoreFromSnapshot,omitempty"`
-	}
-	
-	// GPUDevice defines a GPU device for passthrough
-	type GPUDevice struct {
-		// Name is the logical name of the GPU device in the VM
-		// +kubebuilder:validation:Required
-		// +required
-		Name string `json:"name"`
-	
-		// DeviceName is the resource name of the GPU (e.g., "nvidia.com/gpu")
-		// +kubebuilder:validation:Required
-		// +required
-		DeviceName string `json:"deviceName"`
-	}
+	// StartStrategy defines the start strategy for the virtual machine
+	// +optional
+	StartStrategy *StartStrategySpec `json:"startStrategy,omitempty"`
+
+	// GPUs defines the GPU devices to be passed through to the virtual machine
+	// +optional
+	GPUs []GPUDevice `json:"gpus,omitempty"`
+
+	// RestoreFromSnapshot specifies the name of a WukongSnapshot to restore from
+	// +optional
+	RestoreFromSnapshot string `json:"restoreFromSnapshot,omitempty"`
+}
+
+// GPUDevice defines a GPU device for passthrough
+type GPUDevice struct {
+	// Name is the logical name of the GPU device in the VM
+	// +kubebuilder:validation:Required
+	// +required
+	Name string `json:"name"`
+
+	// DeviceName is the resource name of the GPU (e.g., "nvidia.com/gpu")
+	// +kubebuilder:validation:Required
+	// +required
+	DeviceName string `json:"deviceName"`
+}
 
 // NetworkConfig defines a network interface configuration
 type NetworkConfig struct {
@@ -129,17 +129,16 @@ type NetworkConfig struct {
 	// +optional
 	PhysicalInterface string `json:"physicalInterface,omitempty"`
 
-	// NodeIP is the IP address of the physical interface on the node
-	// This IP will be migrated to the bridge when creating the bridge
-	// Format: "192.168.0.121/24"
-	// Required for bridge and ovs network types to preserve node network connectivity
-	// If not specified, the operator will try to get it from NodeNetworkState
-	// +optional
-	NodeIP *string `json:"nodeIP,omitempty"`
-
 	// IPConfig defines the IP configuration for this network
 	// +optional
 	IPConfig *IPConfigSpec `json:"ipConfig,omitempty"`
+
+	// Primary indicates if this network is the primary/default network
+	// If true and this is a Multus network (Type is set and NADName is specified),
+	// it will be used as the primary network provider instead of the default Pod network.
+	// Only one network can be marked as primary.
+	// +optional
+	Primary bool `json:"primary,omitempty"`
 }
 
 // IPConfigSpec defines IP configuration for a network interface
@@ -320,6 +319,12 @@ type NetworkStatus struct {
 	// NADName is the name of the NetworkAttachmentDefinition used
 	// +optional
 	NADName string `json:"nadName,omitempty"`
+
+	// Primary indicates if this network is the primary/default network
+	// If true and this is a Multus network (NADName is set),
+	// it will be used as the primary network provider instead of the default Pod network.
+	// +optional
+	Primary bool `json:"primary,omitempty"`
 }
 
 // VolumeStatus represents the status of a storage volume
